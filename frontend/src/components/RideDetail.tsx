@@ -180,7 +180,7 @@ export function RideDetail({ rideId }: { rideId: string }) {
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
             {ride.fare.paidAt
               ? `Paid via Tesla Pay on ${formatDateTime(ride.fare.paidAt)}.`
-              : "Please settle your fare with the driver."}
+              : "Settled in cash with the driver."}
           </div>
         )}
       </div>
