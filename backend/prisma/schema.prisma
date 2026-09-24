@@ -118,7 +118,11 @@ model Fare {
   poolDiscountPoysha   Int
   totalFarePoysha      Int
   paymentMethod        PaymentMethod
+  // Settlement flags. CASH is reconciled by the driver and marked settled in
+  // lieu of a real payment gateway; TESLAPAY is a simulated wallet that is
+  // "charged" by stamping paidAt = now when the ride completes.
   paidAt               DateTime?
+  settled              Boolean       @default(false)
 }
 
 // Audit trail of every status transition for a ride request.

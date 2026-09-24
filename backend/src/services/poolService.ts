@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type PaymentMethod } from '@prisma/client';
 import { ApiError } from '../utils/ApiError';
 import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
 import { areRidesCompatible } from '../utils/matching';
-import { recomputePoolFares } from './fareService';
+import { recomputePoolFares, upsertFareForRide } from './fareService';
 
 const MAX_CREATE_POOL_RETRIES = 5;
 const RETRY_BASE_DELAY_MS = 50;
@@ -104,7 +104,10 @@ function findCompatiblePool(
  * same pickupZoneId as the pool's existing rider AND its dropoffZoneId either
  * matches that rider's exactly or sits in the same compatible zone group.
  */
-export async function findOrCreatePoolForRide(rideRequestId: number): Promise<{ poolId: number }> {
+export async function findOrCreatePoolForRide(
+  rideRequestId: number,
+  paymentMethod: PaymentMethod,
+): Promise<{ poolId: number }> {
   return withSerializableRetry(async (tx) => {
     const ride = await loadRideWithZones(tx, rideRequestId);
 
@@ -202,6 +205,22 @@ export async function findOrCreatePoolForRide(rideRequestId: number): Promise<{ 
         actor: `pool-create:${poolId}`,
       });
     }
+
+    // Seed the joining/new ride's fare with its true payment method before the
+    // pool-wide recompute (which preserves each member's existing method), so a
+    // TESLAPAY request is never downgraded to the CASH fallback.
+    const pool = await tx.pool.findUnique({
+      where: { id: poolId },
+      select: { seatsUsed: true },
+    });
+    await upsertFareForRide(
+      tx,
+      ride.id,
+      ride.pickupZoneName,
+      ride.dropoffZoneName,
+      paymentMethod,
+      (pool?.seatsUsed ?? 1) > 1,
+    );
 
     await recomputePoolFares(tx, poolId);
 
