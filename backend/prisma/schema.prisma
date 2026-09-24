@@ -6,3 +6,129 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// Roles a registered user can hold. A DRIVER also acts as a passenger.
+enum Role {
+  PASSENGER
+  DRIVER
+}
+
+// Shared ride lifecycle used by both RideRequest.status and Pool.status so a
+// pool's state always advances in lock-step with the rides it contains.
+enum RideStatus {
+  REQUESTED
+  MATCHED
+  DRIVER_ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  TESLAPAY
+}
+
+// All money is stored as signed integer "poysha" (1 Taka = 100 Poysha).
+// Never Float or Decimal-as-string: Int avoids rounding drift on fares.
+model User {
+  id           Int            @id @default(autoincrement())
+  name         String
+  phone        String         @unique // login identifier; must be unique
+  email        String         @unique // login identifier; must be unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime       @default(now())
+  teslas       Tesla[]
+  rideRequests RideRequest[]
+}
+
+model Tesla {
+  id            Int      @id @default(autoincrement())
+  // A Tesla belongs to its owner driver; deleting the driver removes their Teslas.
+  driverId      Int
+  driver        User     @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  plateNickname String // e.g. "Bullet"
+  seatCapacity  Int // total seats available on this vehicle
+  isActive      Boolean  @default(true)
+  pools         Pool[]
+
+  @@index([driverId])
+}
+
+// Reference data of Dhaka areas, seeded at setup time.
+model Zone {
+  id             Int           @id @default(autoincrement())
+  name           String        @unique
+  pickupRequests RideRequest[] @relation("RideRequestPickupZone")
+  dropoffZoneRequests RideRequest[] @relation("RideRequestDropoffZone")
+}
+
+model RideRequest {
+  id            Int                  @id @default(autoincrement())
+  // Ride history must not be destroyed by a user deletion.
+  passengerId   Int
+  passenger     User                 @relation(fields: [passengerId], references: [id], onDelete: Restrict)
+  pickupZoneId  Int
+  pickupZone    Zone                 @relation("RideRequestPickupZone", fields: [pickupZoneId], references: [id], onDelete: Restrict)
+  dropoffZoneId Int
+  dropoffZone   Zone                 @relation("RideRequestDropoffZone", fields: [dropoffZoneId], references: [id], onDelete: Restrict)
+  status        RideStatus           @default(REQUESTED)
+  requestedAt   DateTime             @default(now())
+  // A request may be pooled into a matching pool, or standalone (null).
+  poolId        Int?
+  pool          Pool?                @relation(fields: [poolId], references: [id], onDelete: SetNull)
+  fare          Fare?
+  statusHistory RideStatusHistory[]
+
+  // Most-queried columns for ride matching and dashboard reporting.
+  @@index([status])
+  @@index([pickupZoneId])
+  @@index([requestedAt])
+}
+
+// A Pool groups ride requests onto a single Tesla. status uses the same
+// RideStatus lifecycle as the requests it serves.
+model Pool {
+  id           Int           @id @default(autoincrement())
+  teslaId      Int
+  tesla        Tesla         @relation(fields: [teslaId], references: [id], onDelete: Restrict)
+  status       RideStatus
+  // seatsUsed must never exceed the related Tesla.seatCapacity. Prisma does not
+  // express cross-table checks, so a BEFORE INSERT/UPDATE trigger enforcing the
+  // invariant is added in the initial migration SQL (PostgreSQL 18 forbids
+  // subqueries in CHECK constraints); the same invariant is additionally
+  // enforced at the application/transaction level on every seatsUsed
+  // read-modify-write.
+  seatsUsed    Int
+  startedAt    DateTime?
+  completedAt  DateTime?
+  rideRequests RideRequest[]
+
+  @@index([teslaId])
+  @@index([status])
+}
+
+model Fare {
+  id                   Int           @id @default(autoincrement())
+  rideRequestId        Int           @unique // one fare per ride request
+  rideRequest          RideRequest   @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
+  baseFarePoysha       Int
+  distanceChargePoysha Int
+  poolDiscountPoysha   Int
+  totalFarePoysha      Int
+  paymentMethod        PaymentMethod
+  paidAt               DateTime?
+}
+
+// Audit trail of every status transition for a ride request.
+model RideStatusHistory {
+  id            Int         @id @default(autoincrement())
+  rideRequestId Int
+  rideRequest   RideRequest @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
+  fromStatus    RideStatus
+  toStatus      RideStatus
+  changedAt     DateTime    @default(now())
+
+  @@index([rideRequestId])
+}
