@@ -210,6 +210,71 @@ describe('POST /api/rides', () => {
   });
 });
 
+describe('PRD story: Nusrat and Rafiq share a pool on Bullet', () => {
+  let nusratToken: string;
+  let rafiqToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    await createDriver();
+    const nusrat = await createPassenger({
+      name: 'Nusrat',
+      phone: '01730000002',
+      email: 'nusrat@test.dev',
+    });
+    const rafiq = await createPassenger({
+      name: 'Rafiq',
+      phone: '01730000003',
+      email: 'rafiq@test.dev',
+    });
+    nusratToken = tokenFor(nusrat);
+    rafiqToken = tokenFor(rafiq);
+  });
+
+  it('pools Banani->Mohakhali and Banani->Gulshan and prices both at the story total', async () => {
+    const nusrat = await makeRideRequest(nusratToken, BANANI, MOKHAKALI);
+    const rafiq = await makeRideRequest(rafiqToken, BANANI, GULSHAN);
+
+    expect(nusrat.status).toBe(201);
+    expect(rafiq.status).toBe(201);
+
+    // Same pickup (Banani), dropoffs in the same Central-North group
+    // (Mohakhali + Gulshan) -> they share one pool on the first Tesla.
+    expect(rafiq.body.ride.pool.id).toBe(nusrat.body.ride.pool.id);
+    expect(rafiq.body.ride.pool).toMatchObject({
+      status: 'MATCHED',
+      seatsUsed: 2,
+      tesla: { plateNickname: 'Bullet', seatCapacity: 4 },
+    });
+
+    // Hand-calculable from docs: base 3000 + 1500 (one zone hop) - 1000 pool
+    // discount = 3500 for each rider. Rafiq's booking response is already
+    // pooled; Nusrat's fare is recomputed once Rafiq joins, seen via reload.
+    expect(rafiq.body.ride.fare).toMatchObject({
+      baseFarePoysha: 3000,
+      distanceChargePoysha: 1500,
+      poolDiscountPoysha: 1000,
+      totalFarePoysha: 3500,
+    });
+
+    const nusratReloaded = await request(app)
+      .get(`/api/rides/${nusrat.body.ride.id}`)
+      .set('Authorization', `Bearer ${nusratToken}`);
+    expect(nusratReloaded.body.ride.fare).toMatchObject({
+      baseFarePoysha: 3000,
+      distanceChargePoysha: 1500,
+      poolDiscountPoysha: 1000,
+      totalFarePoysha: 3500,
+    });
+
+    const persisted = await prisma.fare.findMany({
+      where: { rideRequestId: { in: [nusrat.body.ride.id, rafiq.body.ride.id] } },
+      orderBy: { rideRequestId: 'asc' },
+    });
+    expect(persisted.map((f) => f.totalFarePoysha)).toEqual([3500, 3500]);
+  });
+});
+
 describe('GET /api/zones', () => {
   it('returns the seeded zones ordered by name', async () => {
     await resetDb();
@@ -297,15 +362,22 @@ describe('GET /api/rides (my rides)', () => {
 describe('GET /api/rides/:id', () => {
   let passengerToken: string;
   let driverToken: string;
+  let otherDriverToken: string;
   let strangerToken: string;
 
   beforeEach(async () => {
     await resetDb();
     const passenger = await createPassenger();
     const driver = await createDriver();
+    const otherDriver = await createDriver({
+      phone: '01755555551',
+      email: 'other-driver@test.dev',
+      tesla: { plateNickname: 'Rocket', seatCapacity: 3 },
+    });
     const stranger = await createPassenger({ phone: '01755555550', email: 'stranger@test.dev' });
     passengerToken = tokenFor(passenger);
     driverToken = tokenFor(driver);
+    otherDriverToken = tokenFor(otherDriver);
     strangerToken = tokenFor(stranger);
   });
 
@@ -332,6 +404,11 @@ describe('GET /api/rides/:id', () => {
       .get(`/api/rides/${created.body.ride.id}`)
       .set('Authorization', `Bearer ${strangerToken}`);
     expect(asStranger.status).toBe(403);
+
+    const asOtherDriver = await request(app)
+      .get(`/api/rides/${created.body.ride.id}`)
+      .set('Authorization', `Bearer ${otherDriverToken}`);
+    expect(asOtherDriver.status).toBe(403);
 
     const missing = await request(app)
       .get('/api/rides/99999')
@@ -419,5 +496,40 @@ describe('PATCH /api/rides/:id/cancel', () => {
       .patch(`/api/rides/${created.body.ride.id}/cancel`)
       .set('Authorization', `Bearer ${passengerToken}`);
     expect(again.status).toBe(409);
+  });
+
+  it('rejects cancelling once the driver has arrived or started the ride', async () => {
+    const created = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const poolId = created.body.ride.pool.id;
+    const rideId = created.body.ride.id;
+
+    const arrived = await request(app)
+      .patch(`/api/driver/pools/${poolId}/advance`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({});
+    expect(arrived.body.pool.status).toBe('DRIVER_ARRIVED');
+
+    const cancelArrived = await request(app)
+      .patch(`/api/rides/${rideId}/cancel`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(cancelArrived.status).toBe(409);
+    expect(cancelArrived.body.error).toBe('Cannot cancel a ride in status DRIVER_ARRIVED');
+
+    const started = await request(app)
+      .patch(`/api/driver/pools/${poolId}/advance`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({});
+    expect(started.body.pool.status).toBe('STARTED');
+
+    const cancelStarted = await request(app)
+      .patch(`/api/rides/${rideId}/cancel`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(cancelStarted.status).toBe(409);
+    expect(cancelStarted.body.error).toBe('Cannot cancel a ride in status STARTED');
+
+    const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
+    expect(ride?.status).toBe('STARTED');
+    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+    expect(pool).toMatchObject({ status: 'STARTED', seatsUsed: 1 });
   });
 });
