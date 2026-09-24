@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { config } from './config';
 import router from './routes';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
@@ -11,7 +12,21 @@ import { errorHandler, notFound } from './middlewares/error';
 export const createApp = (): express.Express => {
   const app = express();
 
-  app.use(cors());
+  // Explicit origin allowlist. Requests without an Origin header (server-to-
+  // server, e.g. the Next.js BFF proxy, curl, health checks) are always
+  // allowed; browser origins must be listed in CORS_ORIGINS (defaults to the
+  // local dev/compose frontend ports).
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin || config.corsOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(null, false);
+      },
+    }),
+  );
   app.use(express.json());
 
   app.use('/', router);
