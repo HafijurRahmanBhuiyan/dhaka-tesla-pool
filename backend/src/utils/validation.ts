@@ -95,3 +95,22 @@ export const createRideSchema = z
   });
 
 export type CreateRideInput = z.infer<typeof createRideSchema>;
+
+const rideStatusValues = [
+  'REQUESTED',
+  'MATCHED',
+  'DRIVER_ARRIVED',
+  'STARTED',
+  'COMPLETED',
+  'CANCELLED',
+] as const;
+
+// Body for PATCH /api/driver/pools/:id/advance. `status` is the requested
+// target state; omitted, the pool advances to the immediate next forward step.
+export const advancePoolSchema = z.object({
+  status: z
+    .enum(rideStatusValues, { message: 'status must be a valid pool/ride status' })
+    .optional(),
+});
+
+export type AdvancePoolInput = z.infer<typeof advancePoolSchema>;
