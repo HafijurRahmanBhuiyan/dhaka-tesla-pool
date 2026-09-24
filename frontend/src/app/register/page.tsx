@@ -1,7 +1,5 @@
 "use client";
 
-"use client";
-
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
@@ -102,7 +100,8 @@ export default function RegisterPage() {
         }
         return;
       }
-      router.push("/rides");
+      const auth = data as AuthResponse;
+      router.push(auth.user.role === "DRIVER" ? "/driver/dashboard" : "/rides");
       router.refresh();
     } catch (error) {
       if (error instanceof ApiError) setGeneralError(error.message);

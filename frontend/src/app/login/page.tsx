@@ -43,7 +43,8 @@ export default function LoginPage() {
         setGeneralError(err.error ?? "Unable to sign in. Please try again.");
         return;
       }
-      router.push("/rides");
+      const auth = data as AuthResponse;
+      router.push(auth.user.role === "DRIVER" ? "/driver/dashboard" : "/rides");
       router.refresh();
     } catch (error) {
       if (error instanceof ApiError) setGeneralError(error.message);
