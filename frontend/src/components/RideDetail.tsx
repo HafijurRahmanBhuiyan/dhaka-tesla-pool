@@ -153,7 +153,7 @@ export function RideDetail({ rideId }: { rideId: string }) {
               </p>
             </div>
             <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-              {ride.pool.seatsUsed}/{ride.pool.seatCapacity} seats filled
+              {ride.pool.seatsUsed}/{ride.pool.tesla?.seatCapacity ?? "—"} seats filled
             </span>
           </div>
         ) : (

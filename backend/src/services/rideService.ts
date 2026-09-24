@@ -15,7 +15,11 @@ export interface CreateRideInput {
 const RIDE_DETAIL_INCLUDE = {
   pickupZone: true,
   dropoffZone: true,
-  pool: { include: { tesla: { select: { id: true, plateNickname: true, driverId: true } } } },
+  pool: {
+    include: {
+      tesla: { select: { id: true, plateNickname: true, seatCapacity: true, driverId: true } },
+    },
+  },
   fare: true,
   statusHistory: { orderBy: { changedAt: 'asc' as const } },
 } as const;
