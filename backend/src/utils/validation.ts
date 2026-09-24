@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const bdPhoneRegex = /^01[3-9]\d{8}$/;
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const paymentMethodValues = ['CASH', 'TESLAPAY'] as const;
 
 export const registerSchema = z
   .object({
@@ -67,3 +68,30 @@ export const loginSchema = z.object({
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+
+export const createRideSchema = z
+  .object({
+    pickupZoneId: z
+      .number({ message: 'pickupZoneId must be a number' })
+      .int('pickupZoneId must be a whole number')
+      .positive('pickupZoneId must be a positive integer'),
+    dropoffZoneId: z
+      .number({ message: 'dropoffZoneId must be a number' })
+      .int('dropoffZoneId must be a whole number')
+      .positive('dropoffZoneId must be a positive integer'),
+    paymentMethod: z
+      .enum(paymentMethodValues, { message: 'paymentMethod must be CASH or TESLAPAY' })
+      .optional()
+      .default('CASH'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.pickupZoneId === data.dropoffZoneId) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['dropoffZoneId'],
+        message: 'dropoffZoneId must differ from pickupZoneId',
+      });
+    }
+  });
+
+export type CreateRideInput = z.infer<typeof createRideSchema>;
