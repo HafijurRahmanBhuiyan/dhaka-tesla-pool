@@ -18,7 +18,7 @@ const RIDE_WITH_PASSENGER_INCLUDE = {
 } as const;
 
 const POOL_WITH_RIDES_INCLUDE = {
-  tesla: { select: { id: true, plateNickname: true } },
+  tesla: { select: { id: true, plateNickname: true, seatCapacity: true } },
   rideRequests: {
     where: ACTIVE_RIDES_ONLY,
     orderBy: { id: 'asc' },
