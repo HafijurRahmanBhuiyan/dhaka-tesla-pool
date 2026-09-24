@@ -63,7 +63,6 @@ export interface PoolSummary {
   id: number;
   status: RideStatus;
   seatsUsed: number;
-  seatCapacity: number;
   tesla?: TeslaBrief | null;
 }
 
