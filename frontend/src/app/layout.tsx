@@ -29,25 +29,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <header className="border-b border-zinc-200 py-4 dark:border-zinc-800">
           <nav className="mx-auto flex w-full max-w-5xl items-center justify-between px-4">
-            <div className="flex items-center gap-6">
-              <Link href="/rides" className="text-lg font-semibold tracking-tight">
-                Dhaka Tesla Pool
-              </Link>
-              <div className="flex items-center gap-1 text-sm">
-                <Link
-                  href="/rides"
-                  className="rounded-lg px-3 py-1.5 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                >
-                  Rides
-                </Link>
-                <Link
-                  href="/rides/new"
-                  className="rounded-lg px-3 py-1.5 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                >
-                  Request a ride
-                </Link>
-              </div>
-            </div>
+            <Link href="/rides" className="text-lg font-semibold tracking-tight">
+              Dhaka Tesla Pool
+            </Link>
             <HeaderActions />
           </nav>
         </header>
