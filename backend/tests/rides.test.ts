@@ -10,6 +10,7 @@ const GULSHAN = ZONE.pickup.Gulshan;
 const BANANI = ZONE.pickup.Banani;
 const MOKHAKALI = ZONE.pickup.Mohakhali;
 const DHAANMONDI = ZONE.pickup.Dhanmondi;
+const MIRPUR = ZONE.pickup.Mirpur;
 const UTTARA = ZONE.pickup.Uttara;
 
 function makeRideRequest(token: string, pickupZoneId: number, dropoffZoneId: number) {
@@ -206,6 +207,90 @@ describe('POST /api/rides', () => {
     const seatsInMatchedPools = pools.reduce((sum, pool) => sum + pool.seatsUsed, 0);
     expect(matchedRides).toBe(accepted.length + 1);
     expect(seatsInMatchedPools).toBe(matchedRides);
+  });
+});
+
+describe('GET /api/zones', () => {
+  it('returns the seeded zones ordered by name', async () => {
+    await resetDb();
+
+    const res = await request(app).get('/api/zones');
+
+    expect(res.status).toBe(200);
+    expect(res.body.zones).toHaveLength(8);
+    expect(res.body.zones[0]).toEqual({ id: expect.any(Number), name: 'Banani' });
+    const names = res.body.zones.map((z: { name: string }) => z.name);
+    expect(names).toEqual([
+      'Banani',
+      'Bashundhara',
+      'Dhanmondi',
+      'Farmgate',
+      'Gulshan',
+      'Mirpur',
+      'Mohakhali',
+      'Uttara',
+    ]);
+  });
+});
+
+describe('GET /api/rides (my rides)', () => {
+  let passengerToken: string;
+  let otherPassengerToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    await createDriver();
+    await createDriver({
+      phone: '01733333330',
+      email: 'ram@test.dev',
+      name: 'Ram Driver',
+      tesla: { plateNickname: 'Lightning', seatCapacity: 4 },
+    });
+    const passenger = await createPassenger();
+    const other = await createPassenger({ phone: '01777777770', email: 'other-me@test.dev' });
+    passengerToken = tokenFor(passenger);
+    otherPassengerToken = tokenFor(other);
+  });
+
+  it('returns 401 without a token', async () => {
+    const res = await request(app).get('/api/rides');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns only the logged-in passenger\u2019s own rides, newest first', async () => {
+    const first = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const second = await makeRideRequest(passengerToken, DHAANMONDI, MIRPUR);
+
+    const res = await request(app)
+      .get('/api/rides')
+      .set('Authorization', `Bearer ${passengerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rides).toHaveLength(2);
+    expect(res.body.rides.map((r: { id: number }) => r.id)).toEqual([
+      second.body.ride.id,
+      first.body.ride.id,
+    ]);
+  });
+
+  it('never lists another passenger\u2019s rides', async () => {
+    await makeRideRequest(otherPassengerToken, GULSHAN, BANANI);
+
+    const res = await request(app)
+      .get('/api/rides')
+      .set('Authorization', `Bearer ${passengerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rides).toEqual([]);
+  });
+
+  it('shows an empty list for a passenger with no rides', async () => {
+    const res = await request(app)
+      .get('/api/rides')
+      .set('Authorization', `Bearer ${passengerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rides).toEqual([]);
   });
 });
 

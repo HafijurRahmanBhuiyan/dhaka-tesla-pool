@@ -57,10 +57,20 @@ export async function createRide(
     actor: `user:${userId}`,
   });
 
-  await findOrCreatePoolForRide(ride.id);
+  await findOrCreatePoolForRide(ride.id, input.paymentMethod);
 
   return prisma.rideRequest.findUniqueOrThrow({
     where: { id: ride.id },
+    include: RIDE_DETAIL_INCLUDE,
+  });
+}
+
+export async function listRidesForPassenger(
+  userId: number,
+): Promise<Prisma.RideRequestGetPayload<{ include: typeof RIDE_DETAIL_INCLUDE }>[]> {
+  return prisma.rideRequest.findMany({
+    where: { passengerId: userId },
+    orderBy: { requestedAt: 'desc' },
     include: RIDE_DETAIL_INCLUDE,
   });
 }
