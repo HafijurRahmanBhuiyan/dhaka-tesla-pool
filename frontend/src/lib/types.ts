@@ -35,6 +35,7 @@ export interface Zone {
 export interface TeslaBrief {
   id: number;
   plateNickname: string;
+  seatCapacity: number;
   driverId: number;
 }
 
@@ -83,6 +84,32 @@ export interface RideRequest {
 export interface AuthResponse {
   token: string;
   user: UserProfile;
+}
+
+export interface DriverPoolPassenger {
+  id: number;
+  name: string;
+  phone: string;
+}
+
+export interface DriverPoolRide {
+  id: number;
+  passenger: DriverPoolPassenger;
+  pickupZone: Zone;
+  dropoffZone: Zone;
+  fare: Fare | null;
+}
+
+export interface DriverPool {
+  id: number;
+  status: RideStatus;
+  seatsUsed: number;
+  tesla: { id: number; plateNickname: string; seatCapacity: number };
+  rideRequests: DriverPoolRide[];
+}
+
+export interface ActivePoolsResponse {
+  pools: DriverPool[];
 }
 
 export interface ZodIssue {
