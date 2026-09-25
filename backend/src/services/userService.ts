@@ -16,6 +16,7 @@ export interface UserProfile {
   email: string;
   role: User['role'];
   createdAt: Date;
+  locationZone?: { id: number; name: string } | null;
   teslas?: TeslaSummary[];
 }
 
@@ -27,6 +28,7 @@ export const getProfile = async (id: number): Promise<UserProfile> => {
   const user = await prisma.user.findUnique({
     where: { id },
     include: {
+      locationZone: { select: { id: true, name: true } },
       teslas: { select: { id: true, plateNickname: true, seatCapacity: true, isActive: true } },
     },
   });
@@ -39,6 +41,7 @@ export const getProfile = async (id: number): Promise<UserProfile> => {
     email: user.email,
     role: user.role,
     createdAt: user.createdAt,
+    locationZone: user.locationZone,
     ...(user.role === 'DRIVER' ? { teslas: user.teslas } : {}),
   };
 };
