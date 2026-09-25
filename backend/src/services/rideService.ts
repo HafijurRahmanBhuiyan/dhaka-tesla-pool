@@ -5,11 +5,13 @@ import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
 import { findOrCreatePoolForRide } from './poolService';
 import { recomputePoolFares } from './fareService';
+import { recomputePoolState } from './poolStateService';
 
 export interface CreateRideInput {
   pickupZoneId: number;
   dropoffZoneId: number;
   paymentMethod: PaymentMethod;
+  driverId?: number;
 }
 
 const RIDE_DETAIL_INCLUDE = {
@@ -61,7 +63,7 @@ export async function createRide(
     actor: `user:${userId}`,
   });
 
-  await findOrCreatePoolForRide(ride.id, input.paymentMethod);
+  await findOrCreatePoolForRide(ride.id, input.paymentMethod, input.driverId);
 
   return prisma.rideRequest.findUniqueOrThrow({
     where: { id: ride.id },
@@ -149,17 +151,12 @@ export async function cancelRide(
         });
 
         if (ride.pool) {
-          const wasSolo = ride.pool.seatsUsed <= 1;
-          if (wasSolo) {
-            await tx.pool.update({
-              where: { id: ride.pool.id },
-              data: { seatsUsed: 0, status: 'CANCELLED' },
-            });
-          } else {
-            await tx.pool.update({
-              where: { id: ride.pool.id },
-              data: { seatsUsed: { decrement: 1 } },
-            });
+          // Re-derive the pool state from its members: a solo cancel closes the
+          // pool, while a shared pool stays open for its remaining riders.
+          const state = await recomputePoolState(tx, ride.pool.id);
+          if (state.seatsUsed > 0) {
+            // A survivor remains in a pooled trip, so their dynamic pool
+            // discount must be recomputed.
             await recomputePoolFares(tx, ride.pool.id);
           }
         }

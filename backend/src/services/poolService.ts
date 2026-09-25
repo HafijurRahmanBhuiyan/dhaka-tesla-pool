@@ -4,6 +4,13 @@ import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
 import { areRidesCompatible } from '../utils/matching';
 import { recomputePoolFares, upsertFareForRide } from './fareService';
+import { recomputePoolState } from './poolStateService';
+
+/** Sent when a rider loses a race for the last free seat in a compatible pool. */
+export const SEAT_NO_LONGER_AVAILABLE_MESSAGE = 'Seat no longer available. Please try again.';
+
+/** Sent when no Tesla anywhere is free to start (or extend toward) a new pool. */
+export const NO_TESLA_AVAILABLE_MESSAGE = 'No Tesla available to serve this ride';
 
 const MAX_CREATE_POOL_RETRIES = 5;
 const RETRY_BASE_DELAY_MS = 50;
@@ -67,10 +74,22 @@ interface CompatiblePool {
   members: Array<{ id: number }>;
 }
 
+interface CompatiblePoolSearch {
+  chosen: CompatiblePool | null;
+  /**
+   * True when a route-compatible pool exists but has no free seat. Used to tell
+   * a rider who just lost the last-seat race ("Seat no longer available...")
+   * apart from a rider whose route simply doesn't fit anywhere.
+   */
+  hadFullCompatible: boolean;
+}
+
 /**
- * Pick the first open pool (MATCHED, active tesla, free seat) whose current
- * members' rides are compatible with the incoming ride. All open pools are
- * already locked FOR UPDATE by the caller.
+ * Pick the first open pool (MATCHED, active tesla) whose current members' rides
+ * are compatible with the incoming ride, while tracking whether a compatible
+ * pool exists but is full. All open pools are already locked FOR UPDATE by the
+ * caller. A pool stays open (status MATCHED) for the whole trip, so a new
+ * passenger can join mid-trip whenever a compatible pool still has a free seat.
  */
 function findCompatiblePool(
   ride: RideForMatching,
@@ -80,14 +99,20 @@ function findCompatiblePool(
     tesla: { seatCapacity: number };
     members: RideForMatching[];
   }>,
-): CompatiblePool | null {
+): CompatiblePoolSearch {
+  let hadFullCompatible = false;
+
   for (const pool of openPools) {
-    if (pool.seatsUsed >= pool.tesla.seatCapacity) continue;
     const isCompatible = pool.members.some((member) => areRidesCompatible(ride, member));
     if (!isCompatible) continue;
-    return { poolId: pool.id, members: pool.members };
+    if (pool.seatsUsed >= pool.tesla.seatCapacity) {
+      hadFullCompatible = true;
+      continue;
+    }
+    return { chosen: { poolId: pool.id, members: pool.members }, hadFullCompatible };
   }
-  return null;
+
+  return { chosen: null, hadFullCompatible };
 }
 
 /**
@@ -107,25 +132,25 @@ function findCompatiblePool(
 export async function findOrCreatePoolForRide(
   rideRequestId: number,
   paymentMethod: PaymentMethod,
+  preferredDriverId?: number,
 ): Promise<{ poolId: number }> {
   return withSerializableRetry(async (tx) => {
     const ride = await loadRideWithZones(tx, rideRequestId);
+    let poolId: number;
 
-    const openPools = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
-      SELECT id FROM "Pool"
-      WHERE "status" = 'MATCHED'
-        AND "teslaId" IN (SELECT id FROM "Tesla" WHERE "isActive" = true)
-      ORDER BY id ASC
-      FOR UPDATE
-    `);
+    if (preferredDriverId) {
+      const driverTesla = await tx.tesla.findFirst({
+        where: { driverId: preferredDriverId, isActive: true },
+      });
+      if (!driverTesla) {
+        throw new ApiError(404, 'Selected driver has no active Tesla available');
+      }
 
-    let chosenPool: CompatiblePool | null = null;
+      await tx.$queryRaw`SELECT id FROM "Tesla" WHERE id = ${driverTesla.id} FOR UPDATE`;
 
-    if (openPools.length > 0) {
-      const pools = await tx.pool.findMany({
-        where: { id: { in: openPools.map((p) => p.id) } },
+      const existingPool = await tx.pool.findFirst({
+        where: { teslaId: driverTesla.id, status: 'MATCHED' },
         include: {
-          tesla: { select: { seatCapacity: true } },
           rideRequests: {
             where: { status: { notIn: ['CANCELLED'] } },
             include: { pickupZone: true, dropoffZone: true },
@@ -133,78 +158,166 @@ export async function findOrCreatePoolForRide(
         },
       });
 
-      const poolCandidates = pools.map((pool) => ({
-        id: pool.id,
-        seatsUsed: pool.seatsUsed,
-        tesla: pool.tesla,
-        members: pool.rideRequests.map((member) => ({
-          id: member.id,
-          pickupZoneName: member.pickupZone.name,
-          dropoffZoneName: member.dropoffZone.name,
-        })),
-      }));
+      if (existingPool) {
+        await tx.$queryRaw`SELECT id FROM "Pool" WHERE id = ${existingPool.id} FOR UPDATE`;
 
-      chosenPool = findCompatiblePool(ride, poolCandidates);
-    }
+        if (existingPool.seatsUsed >= driverTesla.seatCapacity) {
+          throw new ApiError(409, 'Selected driver has no seats available');
+        }
 
-    let poolId: number;
+        const members = existingPool.rideRequests.map((m) => ({
+          id: m.id,
+          pickupZoneName: m.pickupZone.name,
+          dropoffZoneName: m.dropoffZone.name,
+        }));
+        const isCompatible =
+          members.length === 0 || members.some((m) => areRidesCompatible(ride, m));
+        if (!isCompatible) {
+          throw new ApiError(409, 'Selected driver route is incompatible with your destination');
+        }
 
-    if (chosenPool) {
-      poolId = chosenPool.poolId;
-      await tx.pool.update({
-        where: { id: poolId },
-        data: { seatsUsed: { increment: 1 } },
-      });
-      await tx.rideRequest.update({
-        where: { id: ride.id },
-        data: { status: 'MATCHED', poolId },
-      });
-      await logStatusTransition(tx, {
-        rideRequestId: ride.id,
-        fromStatus: 'REQUESTED',
-        toStatus: 'MATCHED',
-        actor: `pool-join:${poolId}`,
-      });
+        poolId = existingPool.id;
+        await tx.pool.update({
+          where: { id: poolId },
+          data: { seatsUsed: { increment: 1 } },
+        });
+        await tx.rideRequest.update({
+          where: { id: ride.id },
+          data: { status: 'MATCHED', poolId },
+        });
+        await logStatusTransition(tx, {
+          rideRequestId: ride.id,
+          fromStatus: 'REQUESTED',
+          toStatus: 'MATCHED',
+          actor: `pool-join:${poolId}`,
+        });
+      } else {
+        const createdPool = await tx.pool.create({
+          data: { teslaId: driverTesla.id, status: 'MATCHED', seatsUsed: 1 },
+        });
+        poolId = createdPool.id;
+        await tx.rideRequest.update({
+          where: { id: ride.id },
+          data: { status: 'MATCHED', poolId },
+        });
+        await logStatusTransition(tx, {
+          rideRequestId: ride.id,
+          fromStatus: 'REQUESTED',
+          toStatus: 'MATCHED',
+          actor: `pool-create:${poolId}`,
+        });
+      }
     } else {
-      const lockedTeslas = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
-        SELECT id FROM "Tesla" WHERE "isActive" = true ORDER BY id ASC FOR UPDATE
+      const openPools = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+        SELECT id FROM "Pool"
+        WHERE "status" = 'MATCHED'
+          AND "teslaId" IN (SELECT id FROM "Tesla" WHERE "isActive" = true)
+        ORDER BY id ASC
+        FOR UPDATE
       `);
 
-      if (lockedTeslas.length === 0) {
-        throw new ApiError(409, 'No Tesla available to serve this ride');
+      let chosenPool: CompatiblePoolSearch;
+
+      if (openPools.length > 0) {
+        const pools = await tx.pool.findMany({
+          where: { id: { in: openPools.map((p) => p.id) } },
+          include: {
+            tesla: { select: { seatCapacity: true } },
+            rideRequests: {
+              where: { status: { notIn: ['CANCELLED'] } },
+              include: { pickupZone: true, dropoffZone: true },
+            },
+          },
+        });
+
+        const poolCandidates = pools.map((pool) => ({
+          id: pool.id,
+          seatsUsed: pool.seatsUsed,
+          tesla: pool.tesla,
+          members: pool.rideRequests.map((member) => ({
+            id: member.id,
+            pickupZoneName: member.pickupZone.name,
+            dropoffZoneName: member.dropoffZone.name,
+          })),
+        }));
+
+        chosenPool = findCompatiblePool(ride, poolCandidates);
+      } else {
+        chosenPool = { chosen: null, hadFullCompatible: false };
       }
 
-      const teslas = await tx.tesla.findMany({
-        where: { id: { in: lockedTeslas.map((t) => t.id) } },
-        include: { pools: true },
-      });
+      if (chosenPool.chosen) {
+        poolId = chosenPool.chosen.poolId;
+        await tx.pool.update({
+          where: { id: poolId },
+          data: { seatsUsed: { increment: 1 } },
+        });
+        await tx.rideRequest.update({
+          where: { id: ride.id },
+          data: { status: 'MATCHED', poolId },
+        });
+        await logStatusTransition(tx, {
+          rideRequestId: ride.id,
+          fromStatus: 'REQUESTED',
+          toStatus: 'MATCHED',
+          actor: `pool-join:${poolId}`,
+        });
+      } else {
+        const lockedTeslas = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+          SELECT id FROM "Tesla" WHERE "isActive" = true ORDER BY id ASC FOR UPDATE
+        `);
 
-      // A Tesla serves one pool at a time: only an idle active Tesla (no open
-      // MATCHED pool) can start a new pool.
-      const idleTesla = teslas.find(
-        (tesla) => !tesla.pools.some((pool) => pool.status === 'MATCHED'),
-      );
+        if (lockedTeslas.length === 0) {
+          throw new ApiError(
+            409,
+            chosenPool.hadFullCompatible
+              ? SEAT_NO_LONGER_AVAILABLE_MESSAGE
+              : NO_TESLA_AVAILABLE_MESSAGE,
+          );
+        }
 
-      if (!idleTesla) {
-        throw new ApiError(409, 'No Tesla available to serve this ride');
+        const teslas = await tx.tesla.findMany({
+          where: { id: { in: lockedTeslas.map((t) => t.id) } },
+          include: { pools: true },
+        });
+
+        // A Tesla serves one pool at a time: only an idle active Tesla (no open
+        // MATCHED pool) can start a new pool.
+        const idleTesla = teslas.find(
+          (tesla) => !tesla.pools.some((pool) => pool.status === 'MATCHED'),
+        );
+
+        if (!idleTesla) {
+          throw new ApiError(
+            409,
+            chosenPool.hadFullCompatible
+              ? SEAT_NO_LONGER_AVAILABLE_MESSAGE
+              : NO_TESLA_AVAILABLE_MESSAGE,
+          );
+        }
+
+        const createdPool = await tx.pool.create({
+          data: { teslaId: idleTesla.id, status: 'MATCHED', seatsUsed: 1 },
+        });
+        poolId = createdPool.id;
+
+        await tx.rideRequest.update({
+          where: { id: ride.id },
+          data: { status: 'MATCHED', poolId },
+        });
+        await logStatusTransition(tx, {
+          rideRequestId: ride.id,
+          fromStatus: 'REQUESTED',
+          toStatus: 'MATCHED',
+          actor: `pool-create:${poolId}`,
+        });
       }
-
-      const createdPool = await tx.pool.create({
-        data: { teslaId: idleTesla.id, status: 'MATCHED', seatsUsed: 1 },
-      });
-      poolId = createdPool.id;
-
-      await tx.rideRequest.update({
-        where: { id: ride.id },
-        data: { status: 'MATCHED', poolId },
-      });
-      await logStatusTransition(tx, {
-        rideRequestId: ride.id,
-        fromStatus: 'REQUESTED',
-        toStatus: 'MATCHED',
-        actor: `pool-create:${poolId}`,
-      });
     }
+
+    // Re-derive the pool's OPEN/CLOSED state from its members, so seatsUsed
+    // tracks the active-members count (a joining ride is always active) and the
+    // pool status stays MATCHED while at least one rider is still on the trip.
+    await recomputePoolState(tx, poolId);
 
     // Seed the joining/new ride's fare with its true payment method before the
     // pool-wide recompute (which preserves each member's existing method), so a
