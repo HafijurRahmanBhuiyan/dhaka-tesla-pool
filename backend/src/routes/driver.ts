@@ -1,9 +1,15 @@
 import { Router } from 'express';
-import { advancePoolHandler, getActivePoolsHandler } from '../controllers/driverController';
+import {
+  advanceRideHandler,
+  getActivePoolsHandler,
+  getAvailableDriversHandler,
+  getDriverLocationHandler,
+  updateDriverLocationHandler,
+} from '../controllers/driverController';
 import { requireAuth, requireRole } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
 import { asyncHandler } from '../utils/asyncHandler';
-import { advancePoolSchema } from '../utils/validation';
+import { advanceRideSchema, updateDriverLocationSchema } from '../utils/validation';
 
 const router = Router();
 
@@ -14,11 +20,29 @@ router.get(
   asyncHandler(getActivePoolsHandler),
 );
 router.patch(
-  '/pools/:id/advance',
+  '/rides/:rideRequestId/advance',
   requireAuth,
   requireRole('DRIVER'),
-  validate(advancePoolSchema),
-  asyncHandler(advancePoolHandler),
+  validate(advanceRideSchema),
+  asyncHandler(advanceRideHandler),
+);
+router.get(
+  '/location',
+  requireAuth,
+  requireRole('DRIVER'),
+  asyncHandler(getDriverLocationHandler),
+);
+router.patch(
+  '/location',
+  requireAuth,
+  requireRole('DRIVER'),
+  validate(updateDriverLocationSchema),
+  asyncHandler(updateDriverLocationHandler),
+);
+router.get(
+  '/available',
+  requireAuth,
+  asyncHandler(getAvailableDriversHandler),
 );
 
 export default router;
