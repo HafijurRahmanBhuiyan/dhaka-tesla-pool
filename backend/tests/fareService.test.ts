@@ -1,30 +1,33 @@
 import {
   BASE_FARE_POYSHA,
-  DISTANCE_CHARGE_PER_ZONE_HOP_POYSHA,
+  PER_KM_CHARGE_POYSHA,
   POOL_DISCOUNT_POYSHA,
   computeFare,
-  getZoneHops,
 } from '../src/services/fareService';
+import { getDistanceKm } from '../src/config/zoneDistance';
 
-describe('getZoneHops', () => {
+describe('getDistanceKm', () => {
   it('returns 0 for the same zone', () => {
-    expect(getZoneHops('Uttara', 'Uttara')).toBe(0);
+    expect(getDistanceKm('Uttara', 'Uttara')).toBe(0);
+    expect(getDistanceKm('Gulshan', 'Gulshan')).toBe(0);
   });
 
-  it('returns 1 for adjacent zones', () => {
-    expect(getZoneHops('Uttara', 'Bashundhara')).toBe(1);
-    expect(getZoneHops('Gulshan', 'Banani')).toBe(1);
+  it('returns the table distances for the PRD story routes', () => {
+    expect(getDistanceKm('Banani', 'Mohakhali')).toBe(4);
+    expect(getDistanceKm('Banani', 'Gulshan')).toBe(3);
+    expect(getDistanceKm('Gulshan', 'Banani')).toBe(3);
   });
 
-  it('finds the shortest path across the zone graph', () => {
-    expect(getZoneHops('Uttara', 'Gulshan')).toBe(2);
-    expect(getZoneHops('Uttara', 'Banani')).toBe(3);
-    expect(getZoneHops('Mirpur', 'Mohakhali')).toBe(2);
+  it('is symmetric', () => {
+    expect(getDistanceKm('Gulshan', 'Bashundhara')).toBe(4);
+    expect(getDistanceKm('Bashundhara', 'Gulshan')).toBe(4);
+    expect(getDistanceKm('Mirpur', 'Uttara')).toBe(9);
+    expect(getDistanceKm('Uttara', 'Mirpur')).toBe(9);
   });
 
-  it('falls back to a single hop for unknown zones', () => {
-    expect(getZoneHops('UnknownZone', 'Gulshan')).toBe(1);
-    expect(getZoneHops('Gulshan', 'Nowhere')).toBe(1);
+  it('falls back to a non-zero distance for unknown zones', () => {
+    expect(getDistanceKm('UnknownZone', 'Gulshan')).toBeGreaterThan(0);
+    expect(getDistanceKm('Gulshan', 'Nowhere')).toBeGreaterThan(0);
   });
 });
 
@@ -39,10 +42,14 @@ describe('computeFare', () => {
     });
   });
 
-  it('adds distance charge per hop for a solo ride', () => {
-    const fare = computeFare('Bashundhara', 'Gulshan', false);
-    expect(fare.distanceChargePoysha).toBe(DISTANCE_CHARGE_PER_ZONE_HOP_POYSHA);
-    expect(fare.totalFarePoysha).toBe(BASE_FARE_POYSHA + DISTANCE_CHARGE_PER_ZONE_HOP_POYSHA);
+  it('adds a per-kilometre distance charge for a solo ride', () => {
+    const fare = computeFare('Gulshan', 'Bashundhara', false);
+    expect(fare.distanceChargePoysha).toBe(
+      getDistanceKm('Gulshan', 'Bashundhara') * PER_KM_CHARGE_POYSHA,
+    );
+    expect(fare.totalFarePoysha).toBe(
+      BASE_FARE_POYSHA + getDistanceKm('Gulshan', 'Bashundhara') * PER_KM_CHARGE_POYSHA,
+    );
   });
 
   it('applies the pool discount only when pooled', () => {
@@ -55,7 +62,7 @@ describe('computeFare', () => {
   });
 
   it('never returns a negative total even on the cheapest pooled route', () => {
-    const fare = computeFare('Gulshan', 'Gulshan', true);
+    const fare = computeFare('Dhanmondi', 'Farmgate', true);
     expect(fare.totalFarePoysha).toBeGreaterThanOrEqual(0);
   });
 });

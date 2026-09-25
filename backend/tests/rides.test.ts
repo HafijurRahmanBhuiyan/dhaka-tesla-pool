@@ -93,9 +93,9 @@ describe('POST /api/rides', () => {
     expect(res.body.ride.pool).toMatchObject({ status: 'MATCHED', seatsUsed: 1 });
     expect(res.body.ride.fare).toMatchObject({
       baseFarePoysha: 3000,
-      distanceChargePoysha: 1500,
+      distanceChargePoysha: 2400,
       poolDiscountPoysha: 0,
-      totalFarePoysha: 4500,
+      totalFarePoysha: 5400,
       paymentMethod: 'CASH',
     });
     expect(res.body.ride.statusHistory).toHaveLength(2);
@@ -123,9 +123,9 @@ describe('POST /api/rides', () => {
     expect(aRide.status).toBe(201);
     expect(aRide.body.ride.fare).toMatchObject({
       baseFarePoysha: 3000,
-      distanceChargePoysha: 1500,
+      distanceChargePoysha: 2400,
       poolDiscountPoysha: 0,
-      totalFarePoysha: 4500,
+      totalFarePoysha: 5400,
     });
 
     // Rider B joins A's existing pool: A must get the discount too, not just B.
@@ -136,7 +136,7 @@ describe('POST /api/rides', () => {
 
     expect(bRide.body.ride.fare).toMatchObject({
       poolDiscountPoysha: 1000,
-      totalFarePoysha: 3500,
+      totalFarePoysha: 4400,
     });
 
     const aReloaded = await request(app)
@@ -145,7 +145,7 @@ describe('POST /api/rides', () => {
     expect(aReloaded.status).toBe(200);
     expect(aReloaded.body.ride.fare).toMatchObject({
       poolDiscountPoysha: 1000,
-      totalFarePoysha: 3500,
+      totalFarePoysha: 4400,
     });
   });
 
@@ -162,6 +162,51 @@ describe('POST /api/rides', () => {
     expect(second.status).toBe(201);
     expect(second.body.ride.pool.id).not.toBe(first.body.ride.pool.id);
     expect(second.body.ride.pool.tesla.id).not.toBe(first.body.ride.pool.tesla.id);
+  });
+
+  it('never pools rides headed in an incompatible direction from the same pickup', async () => {
+    // Banani -> Mohakhali and Banani -> Gulshan are the PRD story's compatible
+    // pair (same Central-North direction band). Banani -> Uttara heads the
+    // opposite way (North), so it must never share the pool or the Tesla.
+    await createDriver({
+      phone: '01788888881',
+      email: 'second-driver@test.dev',
+      tesla: { plateNickname: 'Rocket', seatCapacity: 4 },
+    });
+
+    const south = await makeRideRequest(passengerToken, BANANI, MOKHAKALI);
+    const north = await makeRideRequest(otherPassengerToken, BANANI, UTTARA);
+
+    expect(south.status).toBe(201);
+    expect(north.status).toBe(201);
+    expect(north.body.ride.pool.id).not.toBe(south.body.ride.pool.id);
+    expect(north.body.ride.pool.tesla.id).not.toBe(south.body.ride.pool.tesla.id);
+  });
+
+  it('rejects a 4th concurrent rider once Bullet\u2019s 3 seats are full', async () => {
+    // Bullet seats 3. Three matching riders fill it; a fourth on the same
+    // compatible route must be rejected with the friendly seat-race message
+    // (there is no other Tesla to fall back to).
+    const first = await makeRideRequest(passengerToken, BANANI, MOKHAKALI);
+    const second = await makeRideRequest(otherPassengerToken, BANANI, GULSHAN);
+
+    const thirdUser = await createPassenger({
+      phone: '01799999990',
+      email: 'third@test.dev',
+    });
+    const third = await makeRideRequest(tokenFor(thirdUser), BANANI, MOKHAKALI);
+
+    expect(second.body.ride.pool.id).toBe(first.body.ride.pool.id);
+    expect(third.body.ride.pool.id).toBe(first.body.ride.pool.id);
+
+    const fourthUser = await createPassenger({
+      phone: '01799999991',
+      email: 'fourth@test.dev',
+    });
+    const fourth = await makeRideRequest(tokenFor(fourthUser), BANANI, GULSHAN);
+
+    expect(fourth.status).toBe(409);
+    expect(fourth.body.error).toBe('Seat no longer available. Please try again.');
   });
 
   it('returns 409 when every active Tesla is already busy', async () => {
@@ -190,6 +235,16 @@ describe('POST /api/rides', () => {
     expect(accepted.length + rejected.length).toBe(6);
     for (const res of accepted) {
       expect(res.body.ride.status).toBe('MATCHED');
+    }
+
+    // Bullet now seats 3 and the first rider already holds one seat, so exactly
+    // two of the six racers win a seat. The four losers lost the last-seat race
+    // (a compatible-but-full pool, every Tesla busy), so they get the friendly
+    // concurrency message.
+    expect(accepted).toHaveLength(2);
+    expect(rejected).toHaveLength(4);
+    for (const res of rejected) {
+      expect(res.body.error).toBe('Seat no longer available. Please try again.');
     }
 
     const pools = await prisma.pool.findMany({
@@ -244,17 +299,20 @@ describe('PRD story: Nusrat and Rafiq share a pool on Bullet', () => {
     expect(rafiq.body.ride.pool).toMatchObject({
       status: 'MATCHED',
       seatsUsed: 2,
-      tesla: { plateNickname: 'Bullet', seatCapacity: 4 },
+      tesla: { plateNickname: 'Bullet', seatCapacity: 3 },
     });
 
-    // Hand-calculable from docs: base 3000 + 1500 (one zone hop) - 1000 pool
-    // discount = 3500 for each rider. Rafiq's booking response is already
-    // pooled; Nusrat's fare is recomputed once Rafiq joins, seen via reload.
+    // Hand-calculable from the distance table: Banani->Mohakhali = 4 km,
+    // Banani->Gulshan = 3 km.
+    //   Nusrat: 3000 base + 4*800 (3200) - 1000 pool discount = 5200.
+    //   Rafiq : 3000 base + 3*800 (2400) - 1000 pool discount = 4400.
+    // Rafiq's booking response is already pooled; Nusrat's fare is recomputed
+    // once Rafiq joins, seen via reload.
     expect(rafiq.body.ride.fare).toMatchObject({
       baseFarePoysha: 3000,
-      distanceChargePoysha: 1500,
+      distanceChargePoysha: 2400,
       poolDiscountPoysha: 1000,
-      totalFarePoysha: 3500,
+      totalFarePoysha: 4400,
     });
 
     const nusratReloaded = await request(app)
@@ -262,16 +320,16 @@ describe('PRD story: Nusrat and Rafiq share a pool on Bullet', () => {
       .set('Authorization', `Bearer ${nusratToken}`);
     expect(nusratReloaded.body.ride.fare).toMatchObject({
       baseFarePoysha: 3000,
-      distanceChargePoysha: 1500,
+      distanceChargePoysha: 3200,
       poolDiscountPoysha: 1000,
-      totalFarePoysha: 3500,
+      totalFarePoysha: 5200,
     });
 
     const persisted = await prisma.fare.findMany({
       where: { rideRequestId: { in: [nusrat.body.ride.id, rafiq.body.ride.id] } },
       orderBy: { rideRequestId: 'asc' },
     });
-    expect(persisted.map((f) => f.totalFarePoysha)).toEqual([3500, 3500]);
+    expect(persisted.map((f) => f.totalFarePoysha)).toEqual([5200, 4400]);
   });
 });
 
@@ -468,7 +526,7 @@ describe('PATCH /api/rides/:id/cancel', () => {
       .set('Authorization', `Bearer ${passengerToken}`);
     expect(survivor.body.ride.fare).toMatchObject({
       poolDiscountPoysha: 0,
-      totalFarePoysha: 4500,
+      totalFarePoysha: 5400,
     });
   });
 
@@ -503,11 +561,14 @@ describe('PATCH /api/rides/:id/cancel', () => {
     const poolId = created.body.ride.pool.id;
     const rideId = created.body.ride.id;
 
-    const arrived = await request(app)
-      .patch(`/api/driver/pools/${poolId}/advance`)
-      .set('Authorization', `Bearer ${driverToken}`)
-      .send({});
-    expect(arrived.body.pool.status).toBe('DRIVER_ARRIVED');
+    const advanceRide = (status?: string) =>
+      request(app)
+        .patch(`/api/driver/rides/${rideId}/advance`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send(status === undefined ? {} : { status });
+
+    const arrived = await advanceRide('DRIVER_ARRIVED');
+    expect(arrived.body.pool.rideRequests[0].status).toBe('DRIVER_ARRIVED');
 
     const cancelArrived = await request(app)
       .patch(`/api/rides/${rideId}/cancel`)
@@ -515,11 +576,8 @@ describe('PATCH /api/rides/:id/cancel', () => {
     expect(cancelArrived.status).toBe(409);
     expect(cancelArrived.body.error).toBe('Cannot cancel a ride in status DRIVER_ARRIVED');
 
-    const started = await request(app)
-      .patch(`/api/driver/pools/${poolId}/advance`)
-      .set('Authorization', `Bearer ${driverToken}`)
-      .send({});
-    expect(started.body.pool.status).toBe('STARTED');
+    const started = await advanceRide('STARTED');
+    expect(started.body.pool.rideRequests[0].status).toBe('STARTED');
 
     const cancelStarted = await request(app)
       .patch(`/api/rides/${rideId}/cancel`)
@@ -529,7 +587,8 @@ describe('PATCH /api/rides/:id/cancel', () => {
 
     const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
     expect(ride?.status).toBe('STARTED');
+    // The pool itself stays OPEN (derived 'MATCHED') while a rider is active.
     const pool = await prisma.pool.findUnique({ where: { id: poolId } });
-    expect(pool).toMatchObject({ status: 'STARTED', seatsUsed: 1 });
+    expect(pool).toMatchObject({ status: 'MATCHED', seatsUsed: 1 });
   });
 });

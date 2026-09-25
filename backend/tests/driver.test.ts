@@ -21,9 +21,9 @@ function makeRideRequest(
     .send({ pickupZoneId, dropoffZoneId, paymentMethod });
 }
 
-function advancePool(token: string, poolId: number, status?: string) {
+function advanceRide(token: string, rideRequestId: number, status?: string) {
   const req = request(app)
-    .patch(`/api/driver/pools/${poolId}/advance`)
+    .patch(`/api/driver/rides/${rideRequestId}/advance`)
     .set('Authorization', `Bearer ${token}`);
   return status === undefined ? req.send({}) : req.send({ status });
 }
@@ -72,7 +72,7 @@ describe('GET /api/driver/pools/active', () => {
     });
     expect(pool.rideRequests[0].passenger.name).toBe('John Rider');
     expect(pool.rideRequests[0].fare).toMatchObject({
-      totalFarePoysha: 4500,
+      totalFarePoysha: 5400,
       settled: false,
     });
   });
@@ -99,12 +99,14 @@ describe('GET /api/driver/pools/active', () => {
   });
 });
 
-describe('PATCH /api/driver/pools/:id/advance', () => {
+describe('PATCH /api/driver/rides/:rideRequestId/advance', () => {
   let driverAToken: string;
   let driverBToken: string;
   let passengerToken: string;
   let teslaPayToken: string;
   let poolId: number;
+  let firstRideId: number;
+  let secondRideId: number;
 
   beforeEach(async () => {
     await resetDb();
@@ -124,10 +126,12 @@ describe('PATCH /api/driver/pools/:id/advance', () => {
     const second = await makeRideRequest(teslaPayToken, GULSHAN, MOKHAKALI, 'TESLAPAY');
     expect(second.body.ride.pool.id).toBe(first.body.ride.pool.id);
     poolId = first.body.ride.pool.id;
+    firstRideId = first.body.ride.id;
+    secondRideId = second.body.ride.id;
   });
 
   it('rejects a non-immediate transition with 409', async () => {
-    const res = await advancePool(driverAToken, poolId, 'STARTED');
+    const res = await advanceRide(driverAToken, firstRideId, 'STARTED');
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Invalid transition from MATCHED to STARTED');
@@ -136,45 +140,59 @@ describe('PATCH /api/driver/pools/:id/advance', () => {
     expect(pool?.status).toBe('MATCHED');
   });
 
-  it('advances the pool one step when no target is given', async () => {
-    const res = await advancePool(driverAToken, poolId);
+  it('advances just one ride one step when no target is given', async () => {
+    const res = await advanceRide(driverAToken, firstRideId);
 
     expect(res.status).toBe(200);
-    expect(res.body.pool.status).toBe('DRIVER_ARRIVED');
+    expect(res.body.pool.rideRequests[0].status).toBe('DRIVER_ARRIVED');
+    // The second rider is untouched.
+    expect(res.body.pool.rideRequests[1].status).toBe('MATCHED');
+    // The pool-level state is only derived and stays OUTER 'MATCHED' (open).
+    expect(res.body.pool.status).toBe('MATCHED');
     expect(res.body.pool.startedAt).toBeNull();
   });
 
-  it('walks the full lifecycle and updates every linked ride consistently', async () => {
-    const arrived = await advancePool(driverAToken, poolId, 'DRIVER_ARRIVED');
+  it('walks each ride through its own lifecycle independently', async () => {
+    // Rider 1 (CASH) is fully finished first...
+    const arrived = await advanceRide(driverAToken, firstRideId, 'DRIVER_ARRIVED');
     expect(arrived.status).toBe(200);
-    expect(arrived.body.pool.status).toBe('DRIVER_ARRIVED');
+    expect(arrived.body.pool.rideRequests[0].status).toBe('DRIVER_ARRIVED');
 
-    const rideIds = arrived.body.pool.rideRequests.map((r: { id: number }) => r.id);
+    const started = await advanceRide(driverAToken, firstRideId, 'STARTED');
+    expect(started.status).toBe(200);
+    expect(started.body.pool.startedAt).not.toBeNull();
+    expect(started.body.pool.rideRequests[0].status).toBe('STARTED');
 
+    const completed = await advanceRide(driverAToken, firstRideId, 'COMPLETED');
+    expect(completed.status).toBe(200);
+    expect(completed.body.pool.rideRequests[0].status).toBe('COMPLETED');
+    // ...while rider 2 has not moved and the pool stays open.
+    expect(completed.body.pool.rideRequests[1].status).toBe('MATCHED');
+    expect(completed.body.pool.status).toBe('MATCHED');
+
+    // Now rider 2 completes too; only then does the pool CLOSE.
+    await advanceRide(driverAToken, secondRideId, 'DRIVER_ARRIVED');
+    await advanceRide(driverAToken, secondRideId, 'STARTED');
+    const finished = await advanceRide(driverAToken, secondRideId, 'COMPLETED');
+    expect(finished.body.pool.status).toBe('COMPLETED');
+    expect(finished.body.pool.completedAt).not.toBeNull();
+
+    const rideIds = [firstRideId, secondRideId];
     const history = await prisma.rideStatusHistory.findMany({
       where: { rideRequestId: { in: rideIds } },
       orderBy: { changedAt: 'asc' },
     });
     for (const rideId of rideIds) {
       const rows = history.filter((h) => h.rideRequestId === rideId);
-      expect(rows).toHaveLength(3);
-      expect(rows.map((h) => h.toStatus)).toEqual(['REQUESTED', 'MATCHED', 'DRIVER_ARRIVED']);
+      expect(rows).toHaveLength(5);
+      expect(rows.map((h) => h.toStatus)).toEqual([
+        'REQUESTED',
+        'MATCHED',
+        'DRIVER_ARRIVED',
+        'STARTED',
+        'COMPLETED',
+      ]);
     }
-
-    const started = await advancePool(driverAToken, poolId, 'STARTED');
-    expect(started.status).toBe(200);
-    expect(started.body.pool.status).toBe('STARTED');
-    expect(started.body.pool.startedAt).not.toBeNull();
-
-    for (const rideId of rideIds) {
-      const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
-      expect(ride?.status).toBe('STARTED');
-    }
-
-    const completed = await advancePool(driverAToken, poolId, 'COMPLETED');
-    expect(completed.status).toBe(200);
-    expect(completed.body.pool.status).toBe('COMPLETED');
-    expect(completed.body.pool.completedAt).not.toBeNull();
 
     const fares = await prisma.fare.findMany({ where: { rideRequestId: { in: rideIds } } });
     const cashFare = fares.find((f) => f.paymentMethod === 'CASH');
@@ -184,36 +202,36 @@ describe('PATCH /api/driver/pools/:id/advance', () => {
     expect(teslaPayFare).toMatchObject({ settled: true });
     expect(teslaPayFare?.paidAt).not.toBeNull();
 
-    for (const rideId of rideIds) {
-      const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
-      expect(ride?.status).toBe('COMPLETED');
+    const rides = await prisma.rideRequest.findMany({ where: { id: { in: rideIds } } });
+    for (const ride of rides) {
+      expect(ride.status).toBe('COMPLETED');
     }
   });
 
-  it('rejects advancing a terminal pool', async () => {
-    await advancePool(driverAToken, poolId, 'DRIVER_ARRIVED');
-    await advancePool(driverAToken, poolId, 'STARTED');
-    await advancePool(driverAToken, poolId, 'COMPLETED');
+  it('rejects advancing a terminal ride', async () => {
+    await advanceRide(driverAToken, firstRideId, 'DRIVER_ARRIVED');
+    await advanceRide(driverAToken, firstRideId, 'STARTED');
+    await advanceRide(driverAToken, firstRideId, 'COMPLETED');
 
-    const again = await advancePool(driverAToken, poolId, 'DRIVER_ARRIVED');
+    const again = await advanceRide(driverAToken, firstRideId, 'DRIVER_ARRIVED');
     expect(again.status).toBe(409);
     expect(again.body.error).toBe('Invalid transition from COMPLETED to DRIVER_ARRIVED');
   });
 
-  it('forbids advancing another driver\u2019s pool, and forbids passengers', async () => {
-    const asOtherDriver = await advancePool(driverBToken, poolId, 'DRIVER_ARRIVED');
+  it('forbids advancing another driver\u2019s ride, and forbids passengers', async () => {
+    const asOtherDriver = await advanceRide(driverBToken, firstRideId, 'DRIVER_ARRIVED');
     expect(asOtherDriver.status).toBe(403);
     expect(asOtherDriver.body.error).toBe('This pool belongs to another driver');
 
-    const asPassenger = await advancePool(passengerToken, poolId, 'DRIVER_ARRIVED');
+    const asPassenger = await advanceRide(passengerToken, firstRideId, 'DRIVER_ARRIVED');
     expect(asPassenger.status).toBe(403);
 
-    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
-    expect(pool?.status).toBe('MATCHED');
+    const ride = await prisma.rideRequest.findUnique({ where: { id: firstRideId } });
+    expect(ride?.status).toBe('MATCHED');
   });
 
-  it('returns 404 for an unknown pool', async () => {
-    const res = await advancePool(driverAToken, 99999, 'DRIVER_ARRIVED');
+  it('returns 404 for an unknown ride', async () => {
+    const res = await advanceRide(driverAToken, 99999, 'DRIVER_ARRIVED');
     expect(res.status).toBe(404);
   });
 });
