@@ -58,13 +58,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    const errBody = (body ?? { error: `Request failed (${res.status})` }) as ErrorBody;
+    const errBody = ((body ?? { error: `Request failed (${res.status})` }) as ErrorBody) ?? null;
+    const message = errBody?.error ?? `Request failed (${res.status})`;
     if (res.status >= 500) {
       toastBus.emit("Something went wrong on our end. Please try again.");
     } else if (res.status === 403) {
-      toastBus.emit(errBody.error ?? "You are not allowed to do that.");
+      toastBus.emit(message);
     }
-    throw new ApiError(res.status, errBody.error ?? "Request failed", errBody.issues);
+    throw new ApiError(res.status, message, errBody?.issues);
   }
 
   return (body ?? null) as T;
