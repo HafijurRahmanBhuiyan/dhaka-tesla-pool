@@ -1,11 +1,11 @@
 import { PaymentMethod } from '@prisma/client';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { ZONE_GRAPH } from '../config/zoneGraph';
+import { getDistanceKm } from '../config/zoneDistance';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
 export const BASE_FARE_POYSHA = 3000;
-export const DISTANCE_CHARGE_PER_ZONE_HOP_POYSHA = 1500;
+export const PER_KM_CHARGE_POYSHA = 800;
 export const POOL_DISCOUNT_POYSHA = 1000;
 
 export interface FareDraft {
@@ -16,35 +16,15 @@ export interface FareDraft {
 }
 
 /**
- * Shortest path (BFS) between two zones in hops, keyed by zone name so fares are
- * stable across DB reseeds. Unknown or unreachable zones fall back to a single
- * hop so a fare can always be produced.
- */
-export function getZoneHops(fromZone: string, toZone: string): number {
-  if (fromZone === toZone) return 0;
-  if (!ZONE_GRAPH[fromZone] || !ZONE_GRAPH[toZone]) return 1;
-
-  const queue: string[] = [fromZone];
-  const distance = new Map<string, number>([[fromZone, 0]]);
-
-  while (queue.length > 0) {
-    const current = queue.shift() as string;
-    for (const neighbor of ZONE_GRAPH[current]) {
-      if (distance.has(neighbor)) continue;
-      const nextDistance = (distance.get(current) as number) + 1;
-      if (neighbor === toZone) return nextDistance;
-      distance.set(neighbor, nextDistance);
-      queue.push(neighbor);
-    }
-  }
-
-  return 1;
-}
-
-/**
- * Pure fare calculation. All amounts are in poysha (integer subunit, 1 taka =
- * 100 poysha). A pooled ride (two or more riders in the pool) receives the pool
- * discount; a solo ride does not.
+ * Pure fare calculation based on estimated road distance (see
+ * config/zoneDistance.ts). All amounts are in poysha (integer subunit, 1 taka =
+ * 100 poysha). A pooled ride (two or more active riders in the pool) receives
+ * the pool discount; a solo ride does not.
+ *
+ *   fare = BASE (3000) + km * PER_KM (800) - pool discount (1000 if pooled)
+ *
+ * Distances are estimates for a deterministic hand-calculable price; they are
+ * not live-routed or traffic-adjusted.
  */
 export function computeFare(
   pickupZoneName: string,
@@ -52,7 +32,7 @@ export function computeFare(
   isPooled: boolean,
 ): FareDraft {
   const distanceChargePoysha =
-    getZoneHops(pickupZoneName, dropoffZoneName) * DISTANCE_CHARGE_PER_ZONE_HOP_POYSHA;
+    getDistanceKm(pickupZoneName, dropoffZoneName) * PER_KM_CHARGE_POYSHA;
   const poolDiscountPoysha = isPooled ? POOL_DISCOUNT_POYSHA : 0;
   const totalFarePoysha = BASE_FARE_POYSHA + distanceChargePoysha - poolDiscountPoysha;
 
@@ -94,11 +74,13 @@ export async function upsertFareForRide(
 
 /**
  * Recomputes fares for every active member of a pool after a membership change
- * so the pool discount is consistent across all riders.
+ * so the pool discount is consistent across all riders. Only active
+ * (non-terminal) members count toward the "two or more riders" threshold; the
+ * discount is applied when the ride is priced, not re-litigated at completion.
  */
 export async function recomputePoolFares(db: DbClient, poolId: number): Promise<void> {
   const members = await db.rideRequest.findMany({
-    where: { poolId, status: { notIn: ['CANCELLED'] } },
+    where: { poolId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
     include: { pickupZone: true, dropoffZone: true, fare: true },
   });
 
