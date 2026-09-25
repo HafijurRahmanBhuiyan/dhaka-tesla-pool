@@ -39,7 +39,7 @@ const demoUsers: SeedUser[] = [
     phone: '01730000001',
     email: 'jashim@example.com',
     role: 'DRIVER',
-    tesla: { plateNickname: 'Bullet', seatCapacity: 4 },
+    tesla: { plateNickname: 'Bullet', seatCapacity: 3 },
   },
   { name: 'Nusrat', phone: '01730000002', email: 'nusrat@example.com', role: 'PASSENGER' },
   { name: 'Rafiq', phone: '01730000003', email: 'rafiq@example.com', role: 'PASSENGER' },
@@ -80,8 +80,13 @@ async function seedUser(user: SeedUser): Promise<void> {
   }
 
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, BCRYPT_ROUNDS);
+  let locationZoneId: number | undefined;
+  if (user.role === 'DRIVER') {
+    const banani = await prisma.zone.findUnique({ where: { name: 'Banani' } });
+    if (banani) locationZoneId = banani.id;
+  }
   const created = await prisma.user.create({
-    data: { name: user.name, phone: user.phone, email: user.email, passwordHash, role: user.role },
+    data: { name: user.name, phone: user.phone, email: user.email, passwordHash, role: user.role, locationZoneId },
   });
   if (user.tesla) {
     await prisma.tesla.create({
