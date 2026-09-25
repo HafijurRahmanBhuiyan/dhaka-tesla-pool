@@ -77,7 +77,7 @@ exist (all share the password `password123`):
 
 | Name | Role | Tesla | Email | Phone |
 | --- | --- | --- | --- | --- |
-| Jashim | Driver | Bullet (4 seats) | jashim@example.com | 01730000001 |
+| Jashim | Driver | Bullet (3 seats) | jashim@example.com | 01730000001 |
 | Nusrat | Passenger | — | nusrat@example.com | 01730000002 |
 | Rafiq | Passenger | — | rafiq@example.com | 01730000003 |
 | Shirin | Passenger | — | shirin@example.com | 01730000004 |

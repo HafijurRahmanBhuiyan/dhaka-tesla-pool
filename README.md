@@ -17,12 +17,15 @@ passengers need the same pickup area and their dropoffs are compatible — say
 Gulshan** — the system seats them in the same Tesla (Jashim's **Bullet**), runs
 them as one pool, and prices every rider with the published rule:
 
-> **Total = base fare (3000 poysha) + 1500 poysha per zone hop − 1000 poysha
-> pool discount when the pool has more than one rider.**
+> **Total = base fare (3000 poysha) + 800 poysha per km (estimated distance) −
+> 1000 poysha pool discount when the pool has more than one active rider.**
 
-Each of Nusrat's and Rafiq's one-hop trips therefore costs 3000 + 1500 − 1000 =
-**3500 poysha (Tk 35.00)** instead of 4500 solo — the driver earns both fares,
-the city leaves one more car at home.
+Distances use a hand-tailed zone distance table (`config/zoneDistance.ts`), so
+each rider's fare is deterministic and hand-calculable: Nusrat's Banani →
+Mohakhali trip (4 km) costs 3000 + 3200 − 1000 = **5200 poysha (Tk 52.00)**, and
+Rafiq's Banani → Gulshan trip (3 km) costs 3000 + 2400 − 1000 = **4400 poysha
+(Tk 44.00)** — instead of 6200/5400 solo — the driver earns both fares, the city
+leaves one more car at home.
 
 ## Features implemented (phase by phase)
 
@@ -30,15 +33,20 @@ the city leaves one more car at home.
 - User registration/login with roles `PASSENGER` and `DRIVER`; drivers register
   a Tesla (nickname + seat capacity); BCrypt-hashed passwords, JWT auth.
 - Eight seeded Dhaka zones (Banani, Gulshan, Mohakhali, Dhanmondi, Mirpur,
-  Uttara, Farmgate, Bashundhara) with a zone-adjacency graph for fare math.
+  Uttara, Farmgate, Bashundhara) with an estimated distance table for fare math.
 - Ride requests with CASH / TESLAPAY; automatic pool matching on **same pickup
   + compatible dropoff** (zone groups), instant `MATCHED` on the first open
   pool or a new pool on the first idle active Tesla.
-- Fare engine: base + per-hop distance charge − pool discount, recomputed for
+- Fare engine: base + per-km distance charge − pool discount, recomputed for
   all riders whenever the pool membership changes; fares keyed per ride.
-- Full pool lifecycle: `REQUESTED → MATCHED → DRIVER_ARRIVED → STARTED →
-  COMPLETED` (or `CANCELLED`), with a step-transition guard and a full
-  `RideStatusHistory` audit trail.
+- Per-ride lifecycle: every `RideRequest` advances on its own
+  (`REQUESTED → MATCHED → DRIVER_ARRIVED → STARTED → COMPLETED` or
+  `CANCELLED`) via `PATCH /api/driver/rides/:rideRequestId/advance`, with a
+  step-transition guard and a full `RideStatusHistory` audit trail. The pool's
+  status is a derived OPEN/CLOSED flag, so mid-trip joining stays open while
+  any rider is still active.
+- Public `GET /api/fare-estimate` lets passengers preview a solo fare estimate
+  before booking.
 - Cancellation rules: cancel while `REQUESTED`/`MATCHED` only; solo cancel
   closes the pool, shared-pool cancel frees a seat and reprices survivors.
 - Ownership enforcement everywhere: passengers see/cancel only their own rides;
@@ -55,16 +63,20 @@ the city leaves one more car at home.
   fare breakdown, and cancellation — polling every few seconds until done.
 
 **Phase 3 — Driver app + fixes**
-- `/driver/dashboard`: sees their active pool (Tesla nickname, X/Y seats,
-  passengers, fares) and advances it through completion with one button.
+- `/driver/dashboard`: sees their active pools (Tesla nickname, X/Y seats,
+  passengers, fares) and advances **each rider individually** through their own
+  pickup (Mark arrived → Start ride) and dropoff (Complete ride).
 - Seats surfaced correctly via the Tesla's `seatCapacity`; settled fares on
   completion (CASH marked settled, TESLAPAY stamped `paidAt`).
+- Distance-based fares (8 BDT/km from `config/zoneDistance.ts`), a public
+  `/api/fare-estimate` endpoint, Bullet's `seatCapacity = 3`, and a friendly
+  "Seat no longer available" message when a rider loses the last-seat race.
 
 **Phase 4 — Docker + tests hardening**
 - Multi-stage Dockerfiles for the API and web app, `docker compose` (Postgres +
   API + web), idempotent startup migration/seed, `docs/docker.md`.
 - Test coverage closed against the PRD's six required scenarios (see
-  `CONTRIBUTING.md` → *Test Coverage*); 68 backend tests.
+  `CONTRIBUTING.md` → *Test Coverage*); 74 backend tests.
 
 ## Screenshots / GIFs
 
@@ -289,15 +301,16 @@ the project has no email delivery):
 
 | Name | Role | Tesla | Email | Phone |
 | --- | --- | --- | --- | --- |
-| Jashim | Driver | Bullet (4 seats) | jashim@example.com | 01730000001 |
+| Jashim | Driver | Bullet (3 seats) | jashim@example.com | 01730000001 |
 | Nusrat | Passenger | — | nusrat@example.com | 01730000002 |
 | Rafiq | Passenger | — | rafiq@example.com | 01730000003 |
 | Shirin | Passenger | — | shirin@example.com | 01730000004 |
 
 Recommended demo: log in as **Jashim** (driver dashboard), then in another
-window as **Nusrat** and request **Banani → Mohakhali** (TESLAPAY) — it matches
-into Bullet's pool immediately; from the driver dashboard, advance the pool
-(Mark arrived → Start ride → Complete ride) and watch the fare settle.
+window as **Nusrat** and request **Banani → Mohakhali** (TESLAPAY), then as
+**Rafiq** request **Banani → Gulshan** — both match into Bullet's pool at once;
+from the driver dashboard, advance **each rider individually** (Mark arrived →
+Start ride → Complete ride) and watch each fare settle as they finish.
 
 ## Deployment URL
 
@@ -320,7 +333,8 @@ origin); the backend also exposes them directly on `:4000`.
 | `GET` | `/api/rides/:id` | Owner / serving driver | Ride detail with pool, tesla, fare, history |
 | `PATCH` | `/api/rides/:id/cancel` | Passenger owner | Cancel while REQUESTED/MATCHED |
 | `GET` | `/api/driver/pools/active` | Driver | Driver's own active pools with passengers + fares |
-| `PATCH` | `/api/driver/pools/:id/advance` | Driver owner | Advance the pool one step (or to a target status) |
+| `PATCH` | `/api/driver/rides/:rideRequestId/advance` | Driver owner | Advance one ride a step (or to a target status) |
+| `GET` | `/api/fare-estimate` | — | Solo fare estimate by zone ids (`pickupZoneId`, `dropoffZoneId`) |
 | `GET` | `/health` `/api/health` | — | Liveness probe |
 
 Error shape: `{ "error": "...", "issues": [...] }` with appropriate 4xx/5xx.
@@ -347,7 +361,8 @@ Error shape: `{ "error": "...", "issues": [...] }` with appropriate 4xx/5xx.
 ## Known limitations
 
 - **No real geolocation/route mapping** — zones are a fixed 8-node graph; the
-  distance charge uses BFS hop count, not actual distance or traffic.
+  distance charge uses an estimated distance table, not actual distance or
+  traffic.
 - **No real payment gateway** — TESLAPAY just stamps `paidAt` on completion;
   CASH is marked settled only.
 - **Polling, not pushing** — the ride-detail page polls every few seconds
@@ -379,11 +394,10 @@ See below.
 
 ## Concurrency handling (PRD §14)
 
-**The problem — the last-seat race.** Bullet has 4 seats. One seat is already
-taken, and three passengers submit compatible ride requests at nearly the same
-instant. Without care, all three requests could read `seatsUsed = 1`, each
-conclude "there's room", and the pool would end at `seatsUsed = 4` with four
-riders seated — one too many.
+**The problem — the last-seat race.** Bullet has 3 seats and one seat is
+already taken; two or more passengers submit compatible ride requests at nearly
+the same instant. Without care, all of them could read `seatsUsed = 1`, each
+conclude "there's room", and the pool would end over its capacity.
 
 **The fix.** Pool matching (`findOrCreatePoolForRide` in
 `backend/src/services/poolService.ts`) runs inside a single
@@ -403,9 +417,10 @@ A Postgres trigger (`pool_seats_used_within_capacity`) enforces
 
 **Proven by a test.** `rides.test.ts` → *"never overbooks a seat under
 concurrent last-seat demand"* fires six `POST /api/rides` in parallel via
-`Promise.all` on Bullet's 4-seat capacity, then asserts the exact accept/reject
-split and — for every open pool — `seatsUsed <= seatCapacity`, with every
-matched ride accounted for inside a matched pool.
+`Promise.all` on Bullet's 3-seat capacity, then asserts the exact accept/reject
+split (the losers get 409 "Seat no longer available. Please try again.") and —
+for every open pool — `seatsUsed <= seatCapacity`, with every matched ride
+accounted for inside a matched pool.
 
 ## Demo video
 
