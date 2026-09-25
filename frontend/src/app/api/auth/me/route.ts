@@ -18,5 +18,9 @@ export async function GET(req: NextRequest) {
   }
 
   const data = (await res.json()) as { user: UserProfile };
-  return NextResponse.json({ authenticated: true, role: data.user.role });
+  return NextResponse.json({
+    authenticated: true,
+    role: data.user.role,
+    user: data.user,
+  });
 }

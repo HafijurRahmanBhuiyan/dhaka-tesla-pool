@@ -33,7 +33,7 @@ describe('authService.register', () => {
     expect(user.teslas).toHaveLength(1);
     expect(user.teslas![0]).toMatchObject({
       plateNickname: 'Bullet',
-      seatCapacity: 4,
+      seatCapacity: 3,
       isActive: true,
     });
 

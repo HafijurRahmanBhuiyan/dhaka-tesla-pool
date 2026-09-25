@@ -1,10 +1,11 @@
 import type { RideStatus } from '@prisma/client';
 
 /**
- * Explicit valid-transitions map for a Pool (and, in lock-step, every
- * RideRequest it serves). A transition is only legal when the target status is
- * listed for the current status. Cancellation is valid from any non-terminal
- * state; COMPLETED and CANCELLED are terminal.
+ * Explicit valid-transitions map applied to each RideRequest's own lifecycle.
+ * A transition is only legal when the target status is listed for the current
+ * status. Cancellation is valid from any non-terminal state; COMPLETED and
+ * CANCELLED are terminal. Pool.status is no longer driven by this map: it is a
+ * coarse derived OPEN/CLOSED flag (see services/poolStateService.ts).
  */
 export const POOL_STATUS_TRANSITIONS: Record<RideStatus, RideStatus[]> = {
   REQUESTED: ['MATCHED', 'CANCELLED'],
@@ -24,11 +25,3 @@ export const NEXT_FORWARD_STEP: Record<RideStatus, RideStatus | null> = {
   COMPLETED: null,
   CANCELLED: null,
 };
-
-/** Pool states a driver can still act on (anything not terminal). */
-export const ACTIVE_POOL_STATUSES: readonly RideStatus[] = [
-  'REQUESTED',
-  'MATCHED',
-  'DRIVER_ARRIVED',
-  'STARTED',
-];

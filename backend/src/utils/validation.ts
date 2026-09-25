@@ -83,6 +83,11 @@ export const createRideSchema = z
       .enum(paymentMethodValues, { message: 'paymentMethod must be CASH or TESLAPAY' })
       .optional()
       .default('CASH'),
+    driverId: z
+      .number({ message: 'driverId must be a number' })
+      .int('driverId must be a whole number')
+      .positive('driverId must be a positive integer')
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if (data.pickupZoneId === data.dropoffZoneId) {
@@ -96,6 +101,15 @@ export const createRideSchema = z
 
 export type CreateRideInput = z.infer<typeof createRideSchema>;
 
+export const updateDriverLocationSchema = z.object({
+  zoneId: z
+    .number({ message: 'zoneId must be a number' })
+    .int('zoneId must be a whole number')
+    .positive('zoneId must be a positive integer'),
+});
+
+export type UpdateDriverLocationInput = z.infer<typeof updateDriverLocationSchema>;
+
 const rideStatusValues = [
   'REQUESTED',
   'MATCHED',
@@ -105,12 +119,24 @@ const rideStatusValues = [
   'CANCELLED',
 ] as const;
 
-// Body for PATCH /api/driver/pools/:id/advance. `status` is the requested
-// target state; omitted, the pool advances to the immediate next forward step.
-export const advancePoolSchema = z.object({
+// Body for PATCH /api/driver/rides/:rideRequestId/advance. `status` is the
+// requested target state; omitted, the single ride advances to the immediate
+// next forward step.
+export const advanceRideSchema = z.object({
   status: z
     .enum(rideStatusValues, { message: 'status must be a valid pool/ride status' })
     .optional(),
 });
 
-export type AdvancePoolInput = z.infer<typeof advancePoolSchema>;
+export type AdvanceRideInput = z.infer<typeof advanceRideSchema>;
+
+export const fareEstimateQuerySchema = z.object({
+  pickupZoneId: z.coerce
+    .number({ message: 'pickupZoneId must be a number' })
+    .int('pickupZoneId must be a whole number')
+    .positive('pickupZoneId must be a positive integer'),
+  dropoffZoneId: z.coerce
+    .number({ message: 'dropoffZoneId must be a number' })
+    .int('dropoffZoneId must be a whole number')
+    .positive('dropoffZoneId must be a positive integer'),
+});

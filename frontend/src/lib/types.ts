@@ -24,12 +24,28 @@ export interface UserProfile {
   email: string;
   role: Role;
   createdAt: string;
+  locationZone?: Zone | null;
   teslas?: TeslaSummary[];
 }
 
 export interface Zone {
   id: number;
   name: string;
+}
+
+export interface AvailableDriver {
+  id: number;
+  name: string;
+  phone: string;
+  location: Zone;
+  tesla: {
+    id: number;
+    plateNickname: string;
+    seatCapacity: number;
+  };
+  seatsUsed: number;
+  availableSeats: number;
+  isAvailable: boolean;
 }
 
 export interface TeslaBrief {
@@ -93,6 +109,7 @@ export interface DriverPoolPassenger {
 
 export interface DriverPoolRide {
   id: number;
+  status: RideStatus;
   passenger: DriverPoolPassenger;
   pickupZone: Zone;
   dropoffZone: Zone;

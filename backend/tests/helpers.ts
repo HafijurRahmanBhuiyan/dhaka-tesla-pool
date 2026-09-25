@@ -49,7 +49,7 @@ export const driverInput: RegisterInput = {
   email: 'sara@test.dev',
   password: 'password123',
   role: 'DRIVER',
-  tesla: { plateNickname: 'Bullet', seatCapacity: 4 },
+  tesla: { plateNickname: 'Bullet', seatCapacity: 3 },
 };
 
 export async function createUser(input: RegisterInput) {

@@ -1,14 +1,9 @@
-import { Prisma, type RideStatus } from '@prisma/client';
+import { Prisma, type PrismaClient, type RideStatus } from '@prisma/client';
 import { ApiError } from '../utils/ApiError';
 import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
-import {
-  ACTIVE_POOL_STATUSES,
-  NEXT_FORWARD_STEP,
-  POOL_STATUS_TRANSITIONS,
-} from '../config/poolTransitions';
-
-const ACTIVE_RIDES_ONLY = { status: { notIn: ['CANCELLED'] as RideStatus[] } };
+import { NEXT_FORWARD_STEP, POOL_STATUS_TRANSITIONS } from '../config/poolTransitions';
+import { recomputePoolState } from './poolStateService';
 
 const RIDE_WITH_PASSENGER_INCLUDE = {
   passenger: { select: { id: true, name: true, phone: true } },
@@ -17,35 +12,33 @@ const RIDE_WITH_PASSENGER_INCLUDE = {
   fare: true,
 } as const;
 
+// Active pools keep every non-cancelled rider attached (including COMPLETED
+// ones) so the driver can see each rider's own live status and reconcile fares.
 const POOL_WITH_RIDES_INCLUDE = {
   tesla: { select: { id: true, plateNickname: true, seatCapacity: true } },
   rideRequests: {
-    where: ACTIVE_RIDES_ONLY,
+    where: { status: { notIn: ['CANCELLED' as RideStatus] as RideStatus[] } },
     orderBy: { id: 'asc' },
     include: RIDE_WITH_PASSENGER_INCLUDE,
   },
 } as const;
 
 type PoolWithRides = Prisma.PoolGetPayload<{ include: typeof POOL_WITH_RIDES_INCLUDE }>;
-
-/**
- * Adds the driverId as a caller-owned filter around pool queries, so a driver
- * can never see (or target) another driver's Pools.
- */
-function assertOwnPool(pool: { tesla: { driverId: number } }, driverId: number): void {
-  if (pool.tesla.driverId !== driverId) {
-    throw new ApiError(403, 'This pool belongs to another driver');
-  }
-}
+type DbClient = Prisma.TransactionClient | PrismaClient;
 
 /**
  * All of the driver's current (non-terminal) Pools with every assigned
  * passenger's zones and fare. Fares are included so the driver can reconcile
- * cash on completion.
+ * cash on completion. Each RideRequest carries its OWN status; the pool's status
+ * is now only a coarse OPEN ('MATCHED') / CLOSED ('COMPLETED'/'CANCELLED') flag
+ * used for capacity and matching, not a shared trip state.
  */
 export async function getActivePools(driverId: number): Promise<PoolWithRides[]> {
   return prisma.pool.findMany({
-    where: { tesla: { driverId }, status: { in: [...ACTIVE_POOL_STATUSES] } },
+    where: {
+      tesla: { driverId },
+      status: { notIn: ['COMPLETED', 'CANCELLED'] },
+    },
     orderBy: { id: 'asc' },
     include: POOL_WITH_RIDES_INCLUDE,
   });
@@ -72,86 +65,174 @@ async function withConflictRetry<T>(fn: () => Promise<T>): Promise<T> {
   throw new Error('Unreachable: retry loop exhausted');
 }
 
+async function settleRideFare(
+  tx: DbClient,
+  rideRequestId: number,
+  paymentMethod: string,
+): Promise<void> {
+  await tx.fare.updateMany({
+    where: { rideRequestId },
+    data: {
+      settled: true,
+      ...(paymentMethod === 'TESLAPAY' ? { paidAt: new Date() } : {}),
+    },
+  });
+}
+
 /**
- * Advances the driver's pool (and every active RideRequest in it) exactly one
- * step in the valid-transitions map. Falls back to the immediate next forward
- * step when no target is supplied. On completion every fare is frozen: CASH is
- * marked settled, TESLAPAY is additionally stamped with paidAt = now.
+ * Advances ONE RideRequest (not the whole pool) exactly one step along the
+ * valid-transitions map, then re-derives the pool-level OPEN/CLOSED state from
+ * the remaining members. A driver can move each passenger through their own
+ * pickup/dropoff independently even when other passengers are already started
+ * or completed.
+ *
+ * On completion the ride's own fare is settled: CASH is marked settled,
+ * TESLAPAY is additionally stamped with paidAt = now.
  */
-export async function advancePool(
+export async function advanceRide(
   driverId: number,
-  poolId: number,
+  rideRequestId: number,
   targetStatus?: RideStatus,
 ): Promise<PoolWithRides> {
   return withConflictRetry(async () =>
     prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Pool" WHERE id = ${poolId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "RideRequest" WHERE id = ${rideRequestId} FOR UPDATE`;
 
-      const pool = await tx.pool.findUnique({
-        where: { id: poolId },
+      const ride = await tx.rideRequest.findUnique({
+        where: { id: rideRequestId },
         include: {
-          tesla: { select: { driverId: true } },
-          rideRequests: { where: ACTIVE_RIDES_ONLY, include: { fare: true } },
+          pool: { select: { id: true, tesla: { select: { driverId: true } } } },
+          fare: true,
         },
       });
-      if (!pool) throw new ApiError(404, 'Pool not found');
+      if (!ride) throw new ApiError(404, 'Ride request not found');
+      if (!ride.pool) throw new ApiError(409, 'This ride is not assigned to a pool yet');
+      if (ride.pool.tesla.driverId !== driverId) {
+        throw new ApiError(403, 'This pool belongs to another driver');
+      }
 
-      assertOwnPool(pool, driverId);
-
-      const fromStatus = pool.status;
+      const fromStatus = ride.status;
       const toStatus = targetStatus ?? NEXT_FORWARD_STEP[fromStatus];
 
       if (toStatus === null) {
-        throw new ApiError(409, `Pool is already in a terminal state (${fromStatus})`);
+        throw new ApiError(409, `Ride is already in a terminal state (${fromStatus})`);
       }
       if (!POOL_STATUS_TRANSITIONS[fromStatus].includes(toStatus)) {
         throw new ApiError(409, `Invalid transition from ${fromStatus} to ${toStatus}`);
       }
 
-      const update: Prisma.PoolUpdateInput = { status: toStatus };
-      if (toStatus === 'STARTED') update.startedAt = new Date();
-      if (toStatus === 'COMPLETED') update.completedAt = new Date();
+      await tx.rideRequest.update({
+        where: { id: ride.id },
+        data: { status: toStatus },
+      });
+      await logStatusTransition(tx, {
+        rideRequestId: ride.id,
+        fromStatus,
+        toStatus,
+        actor: `driver:${driverId}`,
+      });
 
-      await tx.pool.update({ where: { id: pool.id }, data: update });
-
-      const rides = pool.rideRequests;
-      for (const ride of rides) {
-        await tx.rideRequest.update({
-          where: { id: ride.id },
-          data: { status: toStatus },
-        });
-        await logStatusTransition(tx, {
-          rideRequestId: ride.id,
-          fromStatus,
-          toStatus,
-          actor: `driver:${driverId}`,
-        });
+      if (toStatus === 'COMPLETED' && ride.fare) {
+        await settleRideFare(tx, ride.id, ride.fare.paymentMethod);
       }
 
-      if (toStatus === 'COMPLETED') {
-        await settlePoolFares(tx, rides);
-      }
+      await recomputePoolState(tx, ride.pool.id);
 
       return tx.pool.findUniqueOrThrow({
-        where: { id: pool.id },
+        where: { id: ride.pool.id },
         include: POOL_WITH_RIDES_INCLUDE,
       });
     }),
   );
 }
 
-async function settlePoolFares(
-  tx: Prisma.TransactionClient,
-  rides: Array<{ id: number; fare: { paymentMethod: string } | null }>,
-): Promise<void> {
-  const now = new Date();
-  for (const ride of rides) {
-    await tx.fare.updateMany({
-      where: { rideRequestId: ride.id },
-      data: {
-        settled: true,
-        ...(ride.fare?.paymentMethod === 'TESLAPAY' ? { paidAt: now } : {}),
+export interface AvailableDriver {
+  id: number;
+  name: string;
+  phone: string;
+  location: { id: number; name: string };
+  tesla: {
+    id: number;
+    plateNickname: string;
+    seatCapacity: number;
+  };
+  seatsUsed: number;
+  availableSeats: number;
+  isAvailable: boolean;
+}
+
+export async function updateDriverLocation(
+  driverId: number,
+  zoneId: number,
+): Promise<{ id: number; name: string }> {
+  const zone = await prisma.zone.findUnique({ where: { id: zoneId } });
+  if (!zone) {
+    throw new ApiError(404, 'Zone not found');
+  }
+
+  await prisma.user.update({
+    where: { id: driverId },
+    data: { locationZoneId: zone.id },
+  });
+
+  return { id: zone.id, name: zone.name };
+}
+
+export async function getDriverLocation(
+  driverId: number,
+): Promise<{ id: number; name: string } | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: driverId },
+    include: { locationZone: { select: { id: true, name: true } } },
+  });
+  return user?.locationZone ?? null;
+}
+
+export async function getAvailableDriversInZone(pickupZoneId: number): Promise<AvailableDriver[]> {
+  const drivers = await prisma.user.findMany({
+    where: {
+      role: 'DRIVER',
+      locationZoneId: pickupZoneId,
+    },
+    include: {
+      locationZone: { select: { id: true, name: true } },
+      teslas: {
+        where: { isActive: true },
+        select: { id: true, plateNickname: true, seatCapacity: true },
       },
+    },
+    orderBy: { id: 'asc' },
+  });
+
+  const results: AvailableDriver[] = [];
+
+  for (const driver of drivers) {
+    const activeTesla = driver.teslas[0];
+    if (!activeTesla || !driver.locationZone) continue;
+
+    const activePool = await prisma.pool.findFirst({
+      where: {
+        teslaId: activeTesla.id,
+        status: 'MATCHED',
+      },
+      select: { seatsUsed: true },
+    });
+
+    const seatsUsed = activePool?.seatsUsed ?? 0;
+    const availableSeats = Math.max(0, activeTesla.seatCapacity - seatsUsed);
+
+    results.push({
+      id: driver.id,
+      name: driver.name,
+      phone: driver.phone,
+      location: driver.locationZone,
+      tesla: activeTesla,
+      seatsUsed,
+      availableSeats,
+      isAvailable: availableSeats > 0,
     });
   }
+
+  return results;
 }
+

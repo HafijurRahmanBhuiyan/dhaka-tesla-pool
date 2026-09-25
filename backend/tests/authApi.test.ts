@@ -51,7 +51,7 @@ describe('POST /api/auth/register', () => {
     expect(res.body.user.teslas).toHaveLength(1);
     expect(res.body.user.teslas[0]).toMatchObject({
       plateNickname: 'Bullet',
-      seatCapacity: 4,
+      seatCapacity: 3,
       isActive: true,
     });
   });

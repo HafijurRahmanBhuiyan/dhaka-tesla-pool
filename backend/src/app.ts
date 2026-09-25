@@ -7,6 +7,7 @@ import usersRouter from './routes/users';
 import ridesRouter from './routes/rides';
 import driverRouter from './routes/driver';
 import zonesRouter from './routes/zones';
+import fareRouter from './routes/fare';
 import { errorHandler, notFound } from './middlewares/error';
 
 export const createApp = (): express.Express => {
@@ -35,6 +36,7 @@ export const createApp = (): express.Express => {
   app.use('/api/rides', ridesRouter);
   app.use('/api/driver', driverRouter);
   app.use('/api/zones', zonesRouter);
+  app.use('/api/fare-estimate', fareRouter);
 
   app.use(notFound);
   app.use(errorHandler);

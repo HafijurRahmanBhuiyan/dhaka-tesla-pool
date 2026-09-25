@@ -32,15 +32,19 @@ enum PaymentMethod {
 // All money is stored as signed integer "poysha" (1 Taka = 100 Poysha).
 // Never Float or Decimal-as-string: Int avoids rounding drift on fares.
 model User {
-  id           Int            @id @default(autoincrement())
-  name         String
-  phone        String         @unique // login identifier; must be unique
-  email        String         @unique // login identifier; must be unique
-  passwordHash String
-  role         Role
-  createdAt    DateTime       @default(now())
-  teslas       Tesla[]
-  rideRequests RideRequest[]
+  id             Int            @id @default(autoincrement())
+  name           String
+  phone          String         @unique // login identifier; must be unique
+  email          String         @unique // login identifier; must be unique
+  passwordHash   String
+  role           Role
+  createdAt      DateTime       @default(now())
+  locationZoneId Int?
+  locationZone   Zone?          @relation("DriverLocation", fields: [locationZoneId], references: [id], onDelete: SetNull)
+  teslas         Tesla[]
+  rideRequests   RideRequest[]
+
+  @@index([locationZoneId])
 }
 
 model Tesla {
@@ -58,10 +62,11 @@ model Tesla {
 
 // Reference data of Dhaka areas, seeded at setup time.
 model Zone {
-  id             Int           @id @default(autoincrement())
-  name           String        @unique
-  pickupRequests RideRequest[] @relation("RideRequestPickupZone")
+  id                  Int           @id @default(autoincrement())
+  name                String        @unique
+  pickupRequests      RideRequest[] @relation("RideRequestPickupZone")
   dropoffZoneRequests RideRequest[] @relation("RideRequestDropoffZone")
+  stationedDrivers    User[]        @relation("DriverLocation")
 }
 
 model RideRequest {

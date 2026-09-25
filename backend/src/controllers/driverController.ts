@@ -1,17 +1,40 @@
 import type { Request, Response } from 'express';
-import { advancePool, getActivePools } from '../services/driverService';
-import type { AdvancePoolInput } from '../utils/validation';
+import { advanceRide, getActivePools } from '../services/driverService';
+import type { AdvanceRideInput } from '../utils/validation';
 
 export const getActivePoolsHandler = async (req: Request, res: Response): Promise<void> => {
   const pools = await getActivePools(req.user!.id);
   res.json({ pools });
 };
 
-export const advancePoolHandler = async (req: Request, res: Response): Promise<void> => {
-  const pool = await advancePool(
+export const advanceRideHandler = async (req: Request, res: Response): Promise<void> => {
+  const pool = await advanceRide(
     req.user!.id,
-    Number(req.params.id),
-    (req.body as AdvancePoolInput | undefined)?.status,
+    Number(req.params.rideRequestId),
+    (req.body as AdvanceRideInput | undefined)?.status,
   );
   res.json({ pool });
+};
+
+export const getDriverLocationHandler = async (req: Request, res: Response): Promise<void> => {
+  const { getDriverLocation } = await import('../services/driverService');
+  const location = await getDriverLocation(req.user!.id);
+  res.json({ location });
+};
+
+export const updateDriverLocationHandler = async (req: Request, res: Response): Promise<void> => {
+  const { updateDriverLocation } = await import('../services/driverService');
+  const location = await updateDriverLocation(req.user!.id, req.body.zoneId);
+  res.json({ success: true, location });
+};
+
+export const getAvailableDriversHandler = async (req: Request, res: Response): Promise<void> => {
+  const { getAvailableDriversInZone } = await import('../services/driverService');
+  const pickupZoneId = Number(req.query.pickupZoneId);
+  if (!pickupZoneId || isNaN(pickupZoneId)) {
+    res.json({ drivers: [] });
+    return;
+  }
+  const drivers = await getAvailableDriversInZone(pickupZoneId);
+  res.json({ drivers });
 };
