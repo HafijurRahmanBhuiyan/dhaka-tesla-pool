@@ -19,9 +19,12 @@ export interface FareDraft {
  * Pure fare calculation based on estimated road distance (see
  * config/zoneDistance.ts). All amounts are in poysha (integer subunit, 1 taka =
  * 100 poysha). A pooled ride (two or more active riders in the pool) receives
- * the pool discount; a solo ride does not.
+ * the pool discount; a solo ride does not. A multi-seat request books several
+ * seats in one go, so every component (base, distance, discount) is scaled by
+ * the number of seats:
  *
- *   fare = BASE (3000) + km * PER_KM (800) - pool discount (1000 if pooled)
+ *   per seat  = BASE (3000) + km * PER_KM (800) - pool discount (1000 if pooled)
+ *   total     = per seat * seatsRequested
  *
  * Distances are estimates for a deterministic hand-calculable price; they are
  * not live-routed or traffic-adjusted.
@@ -30,17 +33,19 @@ export function computeFare(
   pickupZoneName: string,
   dropoffZoneName: string,
   isPooled: boolean,
+  seatsRequested = 1,
 ): FareDraft {
-  const distanceChargePoysha =
-    getDistanceKm(pickupZoneName, dropoffZoneName) * PER_KM_CHARGE_POYSHA;
-  const poolDiscountPoysha = isPooled ? POOL_DISCOUNT_POYSHA : 0;
-  const totalFarePoysha = BASE_FARE_POYSHA + distanceChargePoysha - poolDiscountPoysha;
+  const perSeat =
+    BASE_FARE_POYSHA +
+    getDistanceKm(pickupZoneName, dropoffZoneName) * PER_KM_CHARGE_POYSHA -
+    (isPooled ? POOL_DISCOUNT_POYSHA : 0);
 
   return {
-    baseFarePoysha: BASE_FARE_POYSHA,
-    distanceChargePoysha,
-    poolDiscountPoysha,
-    totalFarePoysha,
+    baseFarePoysha: BASE_FARE_POYSHA * seatsRequested,
+    distanceChargePoysha:
+      getDistanceKm(pickupZoneName, dropoffZoneName) * PER_KM_CHARGE_POYSHA * seatsRequested,
+    poolDiscountPoysha: (isPooled ? POOL_DISCOUNT_POYSHA : 0) * seatsRequested,
+    totalFarePoysha: perSeat * seatsRequested,
   };
 }
 
@@ -55,8 +60,9 @@ export async function upsertFareForRide(
   dropoffZoneName: string,
   paymentMethod: PaymentMethod,
   isPooled: boolean,
+  seatsRequested = 1,
 ): Promise<void> {
-  const draft = computeFare(pickupZoneName, dropoffZoneName, isPooled);
+  const draft = computeFare(pickupZoneName, dropoffZoneName, isPooled, seatsRequested);
 
   await db.fare.upsert({
     where: { rideRequestId },
@@ -94,6 +100,7 @@ export async function recomputePoolFares(db: DbClient, poolId: number): Promise<
       member.dropoffZone.name,
       member.fare?.paymentMethod ?? PaymentMethod.CASH,
       isPooled,
+      member.seatsRequested,
     );
   }
 }
