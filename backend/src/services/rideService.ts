@@ -20,7 +20,15 @@ const RIDE_DETAIL_INCLUDE = {
   dropoffZone: true,
   pool: {
     include: {
-      tesla: { select: { id: true, plateNickname: true, seatCapacity: true, driverId: true } },
+      tesla: {
+        select: {
+          id: true,
+          plateNickname: true,
+          seatCapacity: true,
+          driverId: true,
+          driver: { select: { id: true, name: true, phone: true } },
+        },
+      },
     },
   },
   fare: true,
