@@ -47,12 +47,18 @@ export function HeaderActions() {
       )}
 
       {authenticated && role === "DRIVER" && (
-        <div className="hidden items-center sm:flex">
+        <div className="hidden items-center gap-1 sm:flex">
           <Link
             href="/driver/dashboard"
             className="rounded-lg px-3 py-1.5 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
           >
             Driver Dashboard
+          </Link>
+          <Link
+            href="/driver/history"
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+          >
+            Ride History
           </Link>
         </div>
       )}
