@@ -99,6 +99,135 @@ describe('GET /api/driver/pools/active', () => {
   });
 });
 
+describe('GET/PATCH /api/driver/status', () => {
+  let driverAToken: string;
+  let driverBToken: string;
+  let passengerToken: string;
+  let passengerBToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const driverA = await createDriver({ phone: '01711112220', email: 'driver-a@test.dev' });
+    const driverB = await createDriver({ phone: '01711113330', email: 'driver-b@test.dev' });
+    const passenger = await createPassenger();
+    const passengerB = await createPassenger({
+      phone: '01711114440',
+      email: 'passenger-b@test.dev',
+    });
+    driverAToken = tokenFor(driverA);
+    driverBToken = tokenFor(driverB);
+    passengerToken = tokenFor(passenger);
+    passengerBToken = tokenFor(passengerB);
+  });
+
+  function getStatus(token: string) {
+    return request(app).get('/api/driver/status').set('Authorization', `Bearer ${token}`);
+  }
+
+  function setStatus(token: string, isActive: boolean) {
+    return request(app)
+      .patch('/api/driver/status')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ isActive });
+  }
+
+  function makeRide(token: string, pickupZoneId: number, dropoffZoneId: number) {
+    return request(app)
+      .post('/api/rides')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pickupZoneId, dropoffZoneId, paymentMethod: 'CASH' });
+  }
+
+  it('returns the driver\u2019s current online state', async () => {
+    const res = await getStatus(driverAToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toMatchObject({
+      teslaId: expect.any(Number),
+      isActive: true,
+      lastActiveAt: null,
+      seatCapacity: 3,
+      seatsUsed: 0,
+    });
+  });
+
+  it('lets a driver go offline and back online when no ride is active', async () => {
+    const offline = await setStatus(driverAToken, false);
+    expect(offline.status).toBe(200);
+    expect(offline.body.status).toMatchObject({ isActive: false, seatsUsed: 0 });
+    expect(offline.body.status.lastActiveAt).not.toBeNull();
+
+    const read = await getStatus(driverAToken);
+    expect(read.body.status.isActive).toBe(false);
+
+    const online = await setStatus(driverAToken, true);
+    expect(online.status).toBe(200);
+    expect(online.body.status).toMatchObject({ isActive: true, seatsUsed: 0 });
+    expect(online.body.status.lastActiveAt).not.toBeNull();
+  });
+
+  it('reports live seat usage on the status while a pool is active', async () => {
+    await makeRide(passengerToken, GULSHAN, BANANI);
+    await makeRide(passengerBToken, GULSHAN, MOKHAKALI);
+
+    const res = await getStatus(driverAToken);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toMatchObject({ isActive: true, seatCapacity: 3, seatsUsed: 2 });
+  });
+
+  it('refuses to go offline while a ride is active (409)', async () => {
+    await makeRide(passengerToken, GULSHAN, BANANI);
+
+    const offline = await setStatus(driverAToken, false);
+    expect(offline.status).toBe(409);
+    expect(offline.body.error).toBe('You have an active ride in progress');
+
+    const read = await getStatus(driverAToken);
+    expect(read.body.status.isActive).toBe(true);
+  });
+
+  it('allows going offline once every ride on the Tesla is finished', async () => {
+    const ride = (await makeRide(passengerToken, GULSHAN, BANANI)).body.ride;
+    for (const target of ['DRIVER_ARRIVED', 'STARTED', 'COMPLETED']) {
+      await request(app)
+        .patch(`/api/driver/rides/${ride.id}/advance`)
+        .set('Authorization', `Bearer ${driverAToken}`)
+        .send({ status: target });
+    }
+
+    const offline = await setStatus(driverAToken, false);
+    expect(offline.status).toBe(200);
+    expect(offline.body.status.isActive).toBe(false);
+  });
+
+  it('only ever changes the acting driver\u2019s own Tesla', async () => {
+    await setStatus(driverBToken, false);
+
+    // Driver A's Tesla is untouched by driver B's toggle: the Tesla to operate
+    // on is always resolved from the caller's token, never from the request.
+    const a = await getStatus(driverAToken);
+    expect(a.body.status).toMatchObject({ isActive: true });
+
+    const b = await getStatus(driverBToken);
+    expect(b.body.status.isActive).toBe(false);
+  });
+
+  it('rejects passengers (403), unauthenticated calls (401), and malformed bodies (400)', async () => {
+    const asPassenger = await setStatus(passengerToken, false);
+    expect(asPassenger.status).toBe(403);
+
+    const unauthGet = await request(app).get('/api/driver/status');
+    expect(unauthGet.status).toBe(401);
+
+    const malformed = await request(app)
+      .patch('/api/driver/status')
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ isActive: 'yes' });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toBe('Validation failed');
+  });
+});
+
 describe('PATCH /api/driver/rides/:rideRequestId/advance', () => {
   let driverAToken: string;
   let driverBToken: string;

@@ -7,6 +7,8 @@ import type {
   ActivePoolsResponse,
   DriverPool,
   DriverPoolRide,
+  DriverStatus,
+  DriverStatusResponse,
   RideStatus,
   Zone,
 } from "@/lib/types";
@@ -36,6 +38,15 @@ function advanceLabelFor(ride: DriverPoolRide): string | null {
   return ADVANCE_LABELS[ride.status] ?? null;
 }
 
+function formatLastActive(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function DashboardSkeleton() {
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 animate-pulse space-y-6">
@@ -59,6 +70,8 @@ export function DriverDashboard() {
   const [selectedZoneId, setSelectedZoneId] = useState<string>("");
   const [currentLocationName, setCurrentLocationName] = useState<string | null>(null);
   const [savingLocation, setSavingLocation] = useState(false);
+  const [status, setStatus] = useState<DriverStatus | null>(null);
+  const [togglingStatus, setTogglingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancingId, setAdvancingId] = useState<number | null>(null);
 
@@ -122,6 +135,14 @@ export function DriverDashboard() {
         }
       });
 
+    // Load online/offline status
+    apiClient
+      .get<DriverStatusResponse>("/driver/status")
+      .then((data) => {
+        if (!cancelled) setStatus(data.status);
+      })
+      .catch(() => undefined);
+
     return () => {
       cancelled = true;
     };
@@ -146,6 +167,39 @@ export function DriverDashboard() {
       }
     } finally {
       setSavingLocation(false);
+    }
+  }
+
+  async function handleToggleStatus() {
+    if (!status) return;
+    const next = !status.isActive;
+    setTogglingStatus(true);
+    try {
+      const res = await apiClient.patch<DriverStatusResponse>("/driver/status", {
+        isActive: next,
+      });
+      setStatus(res.status);
+      toastBus.emit(
+        next
+          ? "You are now online. Passengers in your zone can book your Tesla."
+          : "You are now offline. New ride requests will not reach you.",
+        "success",
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 401) {
+        toastBus.emit(err.message, "error");
+      } else if (!(err instanceof ApiError)) {
+        toastBus.emit("Failed to update your online status.", "error");
+      }
+      // Re-read the server state so the switch never shows a stale value.
+      try {
+        const current = await apiClient.get<DriverStatusResponse>("/driver/status");
+        setStatus(current.status);
+      } catch {
+        /* server state is still authoritative */
+      }
+    } finally {
+      setTogglingStatus(false);
     }
   }
 
@@ -215,6 +269,88 @@ export function DriverDashboard() {
           {error}
         </div>
       )}
+
+      {/* Online Status Section */}
+      <div className="mb-8 rounded-2xl border border-[var(--card-border)] bg-[var(--card)] p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                status?.isActive
+                  ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                  : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+              }`}
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base font-semibold text-[var(--foreground)]">
+                  Online Status
+                </h2>
+                {status ? (
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                      status.isActive
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                        : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        status.isActive ? "bg-emerald-500 animate-pulse" : "bg-zinc-400"
+                      }`}
+                    />
+                    {status.isActive ? "Online" : "Offline"}
+                  </span>
+                ) : (
+                  <span className="text-xs italic text-[var(--muted-foreground)]">
+                    Loading…
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                {status
+                  ? status.isActive
+                    ? `${status.seatsUsed} of ${status.seatCapacity} seats filled while online.`
+                    : status.lastActiveAt
+                      ? `You went offline at ${formatLastActive(status.lastActiveAt)}. New ride requests will not reach you.`
+                      : "You are offline. New ride requests will not reach you."
+                  : "Fetching your current online state…"}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-xs font-medium text-[var(--muted-foreground)]">
+                Seats free
+              </p>
+              <p className="text-lg font-bold text-[var(--foreground)]">
+                {status ? status.seatCapacity - status.seatsUsed : "–"}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={status?.isActive ?? false}
+              disabled={!status || togglingStatus}
+              onClick={() => void handleToggleStatus()}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400/30 disabled:cursor-not-allowed disabled:opacity-50 ${
+                status?.isActive ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                  status?.isActive ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Driver Location Section */}
       <div className="mb-8 rounded-2xl border border-[var(--card-border)] bg-[var(--card)] p-5 shadow-sm">
@@ -301,7 +437,29 @@ export function DriverDashboard() {
           <div className="h-48 rounded-2xl bg-[var(--muted)] animate-pulse" />
         </div>
       ) : pools === null || pools.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--card-border)] bg-[var(--card)] px-6 py-16 text-center">
+        status !== null && !status.isActive ? (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--card-border)] bg-[var(--card)] px-6 py-16 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500">
+              <svg
+                className="h-7 w-7"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 012.121 9.192 9 9 0 01-12.485 4.728m9.364-13.92a9 9 0 00-14.485 5.728m0 0V5.625m0 3.375H4.25" />
+              </svg>
+            </div>
+            <h3 className="text-base font-semibold text-[var(--foreground)]">
+              You are offline
+            </h3>
+            <p className="mt-1 max-w-sm text-sm text-[var(--muted-foreground)]">
+              You are offline. Go online to receive ride requests.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--card-border)] bg-[var(--card)] px-6 py-16 text-center">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
             <svg
               className="h-7 w-7"
@@ -325,6 +483,7 @@ export function DriverDashboard() {
             When passengers request a ride matching your location and route, they will appear here with individual controls to advance each trip.
           </p>
         </div>
+        )
       ) : (
         <div className="space-y-6">
           {pools.map((pool) => {

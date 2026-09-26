@@ -217,6 +217,48 @@ describe('POST /api/rides', () => {
     expect(res.body.error).toBe('No Tesla available to serve this ride');
   });
 
+  it('never matches an offline Tesla into a new pool', async () => {
+    const offline = await request(app)
+      .patch('/api/driver/status')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ isActive: false });
+    expect(offline.status).toBe(200);
+    expect(offline.body.status.isActive).toBe(false);
+
+    // The only driver is offline, so a compatible request cannot be served.
+    const ride = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    expect(ride.status).toBe(409);
+    expect(ride.body.error).toBe('No Tesla available to serve this ride');
+
+    // Coming back online makes the same Tesla matchable again.
+    const online = await request(app)
+      .patch('/api/driver/status')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ isActive: true });
+    expect(online.status).toBe(200);
+
+    const matched = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    expect(matched.status).toBe(201);
+    expect(matched.body.ride.pool.tesla.plateNickname).toBe('Bullet');
+  });
+
+  it('skips an offline Tesla and matches onto an online driver\u2019s Tesla', async () => {
+    await createDriver({
+      phone: '01788888882',
+      email: 'backup-driver@test.dev',
+      tesla: { plateNickname: 'Rocket', seatCapacity: 3 },
+    });
+
+    await request(app)
+      .patch('/api/driver/status')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ isActive: false });
+
+    const ride = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    expect(ride.status).toBe(201);
+    expect(ride.body.ride.pool.tesla.plateNickname).toBe('Rocket');
+  });
+
   it('never overbooks a seat under concurrent last-seat demand', async () => {
     await makeRideRequest(passengerToken, GULSHAN, BANANI);
 

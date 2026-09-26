@@ -1,10 +1,22 @@
 import type { Request, Response } from 'express';
 import { advanceRide, getActivePools } from '../services/driverService';
-import type { AdvanceRideInput } from '../utils/validation';
+import type { AdvanceRideInput, UpdateDriverStatusInput } from '../utils/validation';
 
 export const getActivePoolsHandler = async (req: Request, res: Response): Promise<void> => {
   const pools = await getActivePools(req.user!.id);
   res.json({ pools });
+};
+
+export const getDriverStatusHandler = async (req: Request, res: Response): Promise<void> => {
+  const { getDriverStatus } = await import('../services/driverService');
+  const status = await getDriverStatus(req.user!.id);
+  res.json({ status });
+};
+
+export const setDriverStatusHandler = async (req: Request, res: Response): Promise<void> => {
+  const { setDriverStatus } = await import('../services/driverService');
+  const status = await setDriverStatus(req.user!.id, (req.body as UpdateDriverStatusInput).isActive);
+  res.json({ status });
 };
 
 export const advanceRideHandler = async (req: Request, res: Response): Promise<void> => {
