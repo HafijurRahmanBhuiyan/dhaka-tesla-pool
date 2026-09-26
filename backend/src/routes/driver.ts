@@ -5,6 +5,7 @@ import {
   getActivePoolsHandler,
   getAvailableDriversHandler,
   getDriverLocationHandler,
+  getDriverRideHistoryHandler,
   getDriverStatusHandler,
   setDriverStatusHandler,
   updateDriverLocationHandler,
@@ -67,6 +68,12 @@ router.patch(
   requireRole('DRIVER'),
   validate(updateDriverLocationSchema),
   asyncHandler(updateDriverLocationHandler),
+);
+router.get(
+  '/rides/history',
+  requireAuth,
+  requireRole('DRIVER'),
+  asyncHandler(getDriverRideHistoryHandler),
 );
 router.get(
   '/available',

@@ -1,5 +1,9 @@
 import type { Request, Response } from 'express';
-import { advanceRide, getActivePools } from '../services/driverService';
+import {
+  advanceRide,
+  getActivePools,
+  getDriverRideHistory,
+} from '../services/driverService';
 import { cancelRideForDriver } from '../services/rideService';
 import type {
   AdvanceRideInput,
@@ -10,6 +14,11 @@ import type {
 export const getActivePoolsHandler = async (req: Request, res: Response): Promise<void> => {
   const pools = await getActivePools(req.user!.id);
   res.json({ pools });
+};
+
+export const getDriverRideHistoryHandler = async (req: Request, res: Response): Promise<void> => {
+  const rides = await getDriverRideHistory(req.user!.id);
+  res.json({ rides });
 };
 
 export const getDriverStatusHandler = async (req: Request, res: Response): Promise<void> => {
