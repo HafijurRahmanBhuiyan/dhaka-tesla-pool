@@ -148,6 +148,15 @@ export function RideDetail({ rideId }: { rideId: string }) {
         </div>
       )}
 
+      {ride.status === "CANCELLED" && ride.cancelledBy === "DRIVER" && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+          <span className="font-semibold">Cancelled by the driver.</span>{" "}
+          {ride.cancellationReason
+            ? `Reason: ${ride.cancellationReason}.`
+            : "No reason was given."}
+        </div>
+      )}
+
       <div className="mb-6 rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <StatusStepper status={ride.status} />
       </div>
@@ -161,6 +170,10 @@ export function RideDetail({ rideId }: { rideId: string }) {
               </span>
               <p className="mt-0.5 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                 {ride.pool.tesla.plateNickname}
+              </p>
+              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                Your booking: {ride.seatsRequested}{" "}
+                {ride.seatsRequested === 1 ? "seat" : "seats"}
               </p>
             </div>
             <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
