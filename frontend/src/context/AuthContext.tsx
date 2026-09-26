@@ -14,6 +14,20 @@ interface AuthContextType {
   updateUser: (updatedUser: Partial<UserProfile>) => void;
 }
 
+interface AuthSnapshot {
+  authenticated?: boolean;
+  role?: Role;
+  user?: UserProfile | null;
+}
+
+async function getAuthSnapshot(): Promise<AuthSnapshot> {
+  const res = await fetch("/api/auth/me", { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Auth check failed with status ${res.status}`);
+  }
+  return (await res.json()) as AuthSnapshot;
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -22,36 +36,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchAuth = useCallback(async () => {
-    try {
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          authenticated?: boolean;
-          role?: Role;
-          user?: UserProfile;
-        };
-        if (data.authenticated) {
-          setAuthenticated(true);
-          setRole(data.role ?? null);
-          setUser(data.user ?? null);
-          return;
-        }
-      }
-      setAuthenticated(false);
-      setRole(null);
-      setUser(null);
-    } catch {
-      setAuthenticated(false);
-      setRole(null);
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
+  // Applies a fetched auth snapshot. Only ever called from event handlers or
+  // promise callbacks, never synchronously from an effect body.
+  const applyAuthSnapshot = useCallback((snapshot: AuthSnapshot) => {
+    const isAuthenticated = snapshot.authenticated === true;
+    setAuthenticated(isAuthenticated);
+    setRole(isAuthenticated ? (snapshot.role ?? null) : null);
+    setUser(isAuthenticated ? (snapshot.user ?? null) : null);
+    setLoading(false);
   }, []);
 
+  const fetchAuth = useCallback(async () => {
+    try {
+      applyAuthSnapshot(await getAuthSnapshot());
+    } catch {
+      applyAuthSnapshot({ authenticated: false });
+    }
+  }, [applyAuthSnapshot]);
+
   useEffect(() => {
-    void fetchAuth();
+    let ignore = false;
+
+    getAuthSnapshot()
+      .then((snapshot) => {
+        if (!ignore) applyAuthSnapshot(snapshot);
+      })
+      .catch(() => {
+        if (!ignore) applyAuthSnapshot({ authenticated: false });
+      });
 
     const handleAuthChange = () => {
       void fetchAuth();
@@ -59,9 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     window.addEventListener("dtp-auth-change", handleAuthChange);
     return () => {
+      ignore = true;
       window.removeEventListener("dtp-auth-change", handleAuthChange);
     };
-  }, [fetchAuth]);
+  }, [applyAuthSnapshot, fetchAuth]);
 
   const login = useCallback((data: AuthResponse) => {
     setAuthenticated(true);
