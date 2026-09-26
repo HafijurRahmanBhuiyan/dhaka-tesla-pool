@@ -18,6 +18,8 @@ export function RideDetail({ rideId }: { rideId: string }) {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   const inFlight = useRef(false);
   const rideRef = useRef<RideRequest | null>(null);
   useEffect(() => {
@@ -60,11 +62,16 @@ export function RideDetail({ rideId }: { rideId: string }) {
     };
   }, [rideId]);
 
-  async function handleCancel() {
+  async function handleCancel(reason?: string) {
     setCancelling(true);
     try {
-      const data = await apiClient.patch<{ ride: RideRequest }>(`/rides/${rideId}/cancel`, {});
+      const data = await apiClient.patch<{ ride: RideRequest }>(
+        `/rides/${rideId}/cancel`,
+        reason ? { reason } : {},
+      );
       setRide(data.ride);
+      setShowCancelConfirm(false);
+      setCancelReason("");
     } catch (err) {
       if (err instanceof ApiError && err.status !== 401) {
         setError(err.message);
@@ -105,8 +112,12 @@ export function RideDetail({ rideId }: { rideId: string }) {
     );
   }
 
-  const cancellable = ride.status === "REQUESTED" || ride.status === "MATCHED";
+  const cancellable =
+    ride.status === "REQUESTED" ||
+    ride.status === "MATCHED" ||
+    ride.status === "DRIVER_ARRIVED";
   const final = FINAL_STATUSES.has(ride.status);
+  const showFeeWarning = ride.status === "DRIVER_ARRIVED";
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8">
@@ -165,16 +176,63 @@ export function RideDetail({ rideId }: { rideId: string }) {
 
         {ride.fare && <FareBreakdown fare={ride.fare} />}
 
-        {cancellable && (
-          <div className="mt-2 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950">
-            <p className="text-sm text-red-700 dark:text-red-300">
-              Changed your mind? You can cancel before the ride starts.
-            </p>
-            <Button variant="danger" onClick={handleCancel} loading={cancelling}>
-              Cancel ride
-            </Button>
-          </div>
-        )}
+        {cancellable &&
+          (showFeeWarning && showCancelConfirm ? (
+            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-4 py-4 dark:border-red-900 dark:bg-red-950">
+              <p className="text-sm font-medium text-red-700 dark:text-red-300">
+                Cancelling now may incur a 10 Tk fee.
+              </p>
+              <p className="mt-1 text-xs text-red-600/80 dark:text-red-400/80">
+                Your driver has already arrived. Are you sure you want to cancel this ride?
+              </p>
+              <input
+                type="text"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Reason (optional)"
+                disabled={cancelling}
+                className="mt-3 w-full rounded-lg border border-red-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-400/20 disabled:opacity-60 dark:border-red-900 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-600"
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  variant="danger"
+                  loading={cancelling}
+                  onClick={() => void handleCancel(cancelReason.trim() || undefined)}
+                >
+                  {cancelling ? "Cancelling…" : "Confirm cancellation"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={cancelling}
+                  onClick={() => {
+                    setShowCancelConfirm(false);
+                    setCancelReason("");
+                  }}
+                >
+                  Keep ride
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950">
+              <p className="text-sm text-red-700 dark:text-red-300">
+                {showFeeWarning
+                  ? "Your driver is here. Cancelling now may incur a 10 Tk fee."
+                  : "Changed your mind? You can cancel before the ride starts."}
+              </p>
+              <Button
+                variant="danger"
+                onClick={() =>
+                  showFeeWarning
+                    ? setShowCancelConfirm(true)
+                    : void handleCancel()
+                }
+                loading={cancelling}
+              >
+                Cancel ride
+              </Button>
+            </div>
+          ))}
 
         {ride.fare?.settled && ride.status === "COMPLETED" && (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">

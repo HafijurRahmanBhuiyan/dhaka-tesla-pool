@@ -17,6 +17,8 @@ function Row({ label, value, strong = false }: { label: string; value: string; s
 
 export function FareBreakdown({ fare }: { fare: Fare }) {
   const discount = fare.poolDiscountPoysha > 0;
+  const cancellationFee = fare.cancellationFeePoysha > 0;
+  const total = fare.totalFarePoysha + fare.cancellationFeePoysha;
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="mb-3 flex items-center justify-between">
@@ -34,10 +36,16 @@ export function FareBreakdown({ fare }: { fare: Fare }) {
         {discount && (
           <Row label="Pool discount" value={poyshaToTaka(fare.poolDiscountPoysha)} />
         )}
+        {cancellationFee && (
+          <Row
+            label="Cancellation fee"
+            value={poyshaToTaka(fare.cancellationFeePoysha)}
+          />
+        )}
         <div className="my-2 border-t border-dashed border-zinc-200 dark:border-zinc-700" />
         <Row
-          label="Total"
-          value={poyshaToTaka(fare.totalFarePoysha)}
+          label={cancellationFee ? "Total due" : "Total"}
+          value={poyshaToTaka(total)}
           strong
         />
       </div>

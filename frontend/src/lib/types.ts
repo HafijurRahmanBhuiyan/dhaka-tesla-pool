@@ -63,6 +63,7 @@ export interface Fare {
   distanceChargePoysha: number;
   poolDiscountPoysha: number;
   totalFarePoysha: number;
+  cancellationFeePoysha: number;
   settled: boolean;
   paidAt: string | null;
 }
@@ -88,6 +89,8 @@ export interface RideRequest {
   pickupZoneId: number;
   dropoffZoneId: number;
   status: RideStatus;
+  cancelledBy: Role | null;
+  cancellationReason: string | null;
   requestedAt: string;
   pickupZone: Zone;
   dropoffZone: Zone;
