@@ -24,6 +24,7 @@ export default function NewRidePage() {
   const [pickupZoneId, setPickupZoneId] = useState("");
   const [dropoffZoneId, setDropoffZoneId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [seatsRequested, setSeatsRequested] = useState(1);
   const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null);
   const [availableDrivers, setAvailableDrivers] = useState<AvailableDriver[] | null>(null);
   // Tracks which pickup zone the currently-loaded driver list belongs to, so the
@@ -105,7 +106,7 @@ export default function NewRidePage() {
     let cancelled = false;
     apiClient
       .get<{ estimate: FareEstimate }>(
-        `/fare-estimate?pickupZoneId=${pickupZoneId}&dropoffZoneId=${dropoffZoneId}`,
+        `/fare-estimate?pickupZoneId=${pickupZoneId}&dropoffZoneId=${dropoffZoneId}&seatsRequested=${seatsRequested}`,
       )
       .then((data) => {
         if (!cancelled && estimateReady) {
@@ -118,7 +119,7 @@ export default function NewRidePage() {
     return () => {
       cancelled = true;
     };
-  }, [estimateReady, pickupZoneId, dropoffZoneId]);
+  }, [estimateReady, pickupZoneId, dropoffZoneId, seatsRequested]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -134,6 +135,7 @@ export default function NewRidePage() {
         dropoffZoneId: Number(dropoffZoneId),
         paymentMethod,
         driverId: selectedDriverId || undefined,
+        seatsRequested,
       });
       router.push(`/rides/${data.ride.id}`);
     } catch (error) {
@@ -149,6 +151,13 @@ export default function NewRidePage() {
 
   const ready = pickupZoneId !== "" && dropoffZoneId !== "" && !sameZone;
   const pickupZoneName = zones?.find((z) => String(z.id) === pickupZoneId)?.name ?? "selected zone";
+  const selectedDriver =
+    availableDrivers?.find((d) => d.id === selectedDriverId) ?? null;
+  // For a chosen driver, cap the request at their free seats; for auto-match we
+  // do not know the car until booking, so offer a practical ceiling that the
+  // backend still double-checks against the real capacity.
+  const maxSeats = selectedDriver ? Math.max(1, selectedDriver.availableSeats) : 4;
+  const seatsOptions = Array.from({ length: maxSeats }, (_, i) => i + 1);
 
   if (authLoading || (!authenticated && authLoading)) {
     return (
@@ -308,7 +317,12 @@ export default function NewRidePage() {
                             value={driver.id}
                             disabled={!hasSeats}
                             checked={isSelected}
-                            onChange={() => setSelectedDriverId(driver.id)}
+                            onChange={() => {
+                              setSelectedDriverId(driver.id);
+                              setSeatsRequested((prev) =>
+                                Math.min(prev, Math.max(1, driver.availableSeats)),
+                              );
+                            }}
                             className="h-4 w-4 text-amber-500 focus:ring-amber-400"
                           />
                           <div>
@@ -402,6 +416,36 @@ export default function NewRidePage() {
             </label>
           </div>
 
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor="seatsRequested"
+                className="mb-1.5 block text-sm font-medium text-[var(--foreground)]"
+              >
+                Number of Seats
+              </label>
+              <select
+                id="seatsRequested"
+                value={seatsRequested}
+                onChange={(e) => setSeatsRequested(Number(e.target.value))}
+                className="w-full rounded-lg border border-[var(--card-border)] bg-[var(--muted)] px-3 py-2 text-sm font-medium text-[var(--foreground)] focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/20"
+              >
+                {seatsOptions.map((n) => (
+                  <option key={n} value={n}>
+                    {n} {n === 1 ? "seat" : "seats"}
+                  </option>
+                ))}
+              </select>
+              {selectedDriver && (
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  {selectedDriver.name}&apos;s {selectedDriver.tesla.plateNickname} has{" "}
+                  {selectedDriver.availableSeats} free{" "}
+                  {selectedDriver.availableSeats === 1 ? "seat" : "seats"}.
+                </p>
+              )}
+            </div>
+          </div>
+
           {estimateReady && estimate && (
             <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-4 dark:border-amber-900/30 dark:bg-amber-950/20">
               <div className="flex items-center justify-between">
@@ -410,12 +454,17 @@ export default function NewRidePage() {
                     Estimated Fare
                   </span>
                   <p className="text-xs text-[var(--muted-foreground)]">
-                    Base fare (Tk 30) + distance charge. May be discounted if pooled with other riders!
+                    Base fare (Tk 30) + distance charge, per seat. May be discounted if pooled with other riders!
                   </p>
                 </div>
-                <span className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
-                  {poyshaToTaka(estimate.totalFarePoysha)}
-                </span>
+                <div className="text-right">
+                  <span className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                    {poyshaToTaka(estimate.totalFarePoysha)}
+                  </span>
+                  <p className="text-[10px] font-medium text-[var(--muted-foreground)]">
+                    {seatsRequested} {seatsRequested === 1 ? "seat" : "seats"} · no pool discount yet
+                  </p>
+                </div>
               </div>
             </div>
           )}
