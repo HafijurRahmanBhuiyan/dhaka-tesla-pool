@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiClient, ApiError } from "@/lib/apiClient";
@@ -159,9 +160,9 @@ export default function NewRidePage() {
   const maxSeats = selectedDriver ? Math.max(1, selectedDriver.availableSeats) : 4;
   const seatsOptions = Array.from({ length: maxSeats }, (_, i) => i + 1);
 
-  if (authLoading || (!authenticated && authLoading)) {
+  if (authLoading || !authenticated || role === "DRIVER") {
     return (
-      <main className="mx-auto w-full max-w-xl flex-1 px-4 py-8">
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-8">
         <div className="animate-pulse space-y-4">
           <div className="h-7 w-48 rounded bg-[var(--muted)]" />
           <div className="h-4 w-64 rounded bg-[var(--muted)]" />
@@ -172,9 +173,25 @@ export default function NewRidePage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-8">
+    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6 sm:py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--foreground)]">
+        <Link
+          href="/rides"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--card)] px-3 py-1.5 text-sm font-medium text-[var(--muted-foreground)] shadow-sm transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+        >
+          <svg
+            className="h-4 w-4"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to My Rides
+        </Link>
+        <h1 className="mt-3 text-2xl font-bold tracking-tight text-[var(--foreground)]">
           Book a Tesla Pool Ride
         </h1>
         <p className="mt-1 text-sm text-[var(--muted-foreground)]">
@@ -260,22 +277,22 @@ export default function NewRidePage() {
               <div className="space-y-2.5">
                 {/* Auto-match option */}
                 <label
-                  className={`flex cursor-pointer items-center justify-between rounded-xl border p-4 transition-all ${
+                  className={`flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded-xl border p-4 transition-all ${
                     selectedDriverId === null
                       ? "border-amber-500 bg-amber-50/50 shadow-sm dark:bg-amber-950/20"
                       : "border-[var(--card-border)] bg-[var(--muted)]/30 hover:border-amber-300"
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <input
                       type="radio"
                       name="driverSelection"
                       checked={selectedDriverId === null}
                       onChange={() => setSelectedDriverId(null)}
-                      className="h-4 w-4 text-amber-500 focus:ring-amber-400"
+                      className="h-4 w-4 shrink-0 text-amber-500 focus:ring-amber-400"
                     />
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-[var(--foreground)]">
                           Auto-Match (Nearest Available Tesla)
                         </span>
@@ -288,7 +305,7 @@ export default function NewRidePage() {
                       </p>
                     </div>
                   </div>
-                  <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                  <span className="shrink-0 text-xs font-semibold text-amber-600 dark:text-amber-400">
                     Fastest
                   </span>
                 </label>
@@ -302,7 +319,7 @@ export default function NewRidePage() {
                     return (
                       <label
                         key={driver.id}
-                        className={`flex cursor-pointer items-center justify-between rounded-xl border p-4 transition-all ${
+                        className={`flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded-xl border p-4 transition-all ${
                           !hasSeats
                             ? "cursor-not-allowed border-[var(--card-border)] opacity-60 bg-[var(--muted)]/10"
                             : isSelected
@@ -310,7 +327,7 @@ export default function NewRidePage() {
                               : "border-[var(--card-border)] bg-[var(--muted)]/30 hover:border-amber-300"
                         }`}
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
                           <input
                             type="radio"
                             name="driverSelection"
@@ -323,10 +340,10 @@ export default function NewRidePage() {
                                 Math.min(prev, Math.max(1, driver.availableSeats)),
                               );
                             }}
-                            className="h-4 w-4 text-amber-500 focus:ring-amber-400"
+                            className="h-4 w-4 shrink-0 text-amber-500 focus:ring-amber-400"
                           />
-                          <div>
-                            <div className="flex items-center gap-2">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="text-sm font-semibold text-[var(--foreground)]">
                                 {driver.name}
                               </span>
@@ -334,30 +351,28 @@ export default function NewRidePage() {
                                 ⚡ {driver.tesla.plateNickname}
                               </span>
                             </div>
-                            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+                            <p className="mt-0.5 break-words text-xs text-[var(--muted-foreground)]">
                               📞 {driver.phone} · Stationed in {driver.location.name}
                             </p>
                           </div>
                         </div>
 
-                        <div className="text-right">
+                        <span
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                            hasSeats
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                              : "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300"
+                          }`}
+                        >
                           <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                              hasSeats
-                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                : "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300"
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              hasSeats ? "bg-emerald-500" : "bg-red-500"
                             }`}
-                          >
-                            <span
-                              className={`h-1.5 w-1.5 rounded-full ${
-                                hasSeats ? "bg-emerald-500" : "bg-red-500"
-                              }`}
-                            />
-                            {hasSeats
-                              ? `${driver.availableSeats} of ${driver.tesla.seatCapacity} seats free`
-                              : "Fully booked"}
-                          </span>
-                        </div>
+                          />
+                          {hasSeats
+                            ? `${driver.availableSeats} of ${driver.tesla.seatCapacity} seats free`
+                            : "Fully booked"}
+                        </span>
                       </label>
                     );
                   })
@@ -448,7 +463,7 @@ export default function NewRidePage() {
 
           {estimateReady && estimate && (
             <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-4 dark:border-amber-900/30 dark:bg-amber-950/20">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <span className="text-xs uppercase font-semibold tracking-wider text-amber-800 dark:text-amber-300">
                     Estimated Fare
@@ -457,7 +472,7 @@ export default function NewRidePage() {
                     Base fare (Tk 30) + distance charge, per seat. May be discounted if pooled with other riders!
                   </p>
                 </div>
-                <div className="text-right">
+                <div className="sm:text-right">
                   <span className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
                     {poyshaToTaka(estimate.totalFarePoysha)}
                   </span>

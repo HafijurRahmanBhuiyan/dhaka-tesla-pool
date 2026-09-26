@@ -11,8 +11,43 @@ const STEPS: RideStatus[] = [
   "COMPLETED",
 ];
 
+type StepState = "done" | "active" | "upcoming";
+
 interface StatusStepperProps {
   status: RideStatus;
+}
+
+function stepStateFor(index: number, currentIndex: number): StepState {
+  if (index < currentIndex) return "done";
+  if (index === currentIndex) return "active";
+  return "upcoming";
+}
+
+function Circle({ state, display }: { state: StepState; display: number }) {
+  return (
+    <span
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${
+        state === "done"
+          ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
+          : state === "active"
+            ? "border-zinc-900 bg-white text-zinc-900 ring-4 ring-zinc-900/10 dark:border-white dark:bg-zinc-900 dark:text-white dark:ring-white/10"
+            : "border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500"
+      }`}
+      aria-hidden="true"
+    >
+      {state === "done" ? (
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+          <path
+            fillRule="evenodd"
+            d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+            clipRule="evenodd"
+          />
+        </svg>
+      ) : (
+        display
+      )}
+    </span>
+  );
 }
 
 export function StatusStepper({ status }: StatusStepperProps) {
@@ -34,54 +69,78 @@ export function StatusStepper({ status }: StatusStepperProps) {
   const currentIndex = STEPS.indexOf(status);
 
   return (
-    <ol className="flex items-center gap-0">
-      {STEPS.map((step, index) => {
-        const isDone = index < currentIndex;
-        const isActive = index === currentIndex;
-        return (
-          <li key={step} className={`flex items-center ${index > 0 ? "flex-1" : ""}`}>
-            {index > 0 && (
-              <div
-                className={`mx-2 h-0.5 flex-1 rounded ${
-                  isDone || isActive ? "bg-zinc-900 dark:bg-white" : "bg-zinc-200 dark:bg-zinc-700"
-                }`}
-              />
-            )}
-            <div className="flex flex-col items-center gap-1.5">
-              <span
-                className={`flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold ${
-                  isDone
-                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
-                    : isActive
-                      ? "border-zinc-900 bg-white text-zinc-900 ring-4 ring-zinc-900/10 dark:border-white dark:bg-zinc-900 dark:text-white dark:ring-white/10"
-                      : "border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500"
-                }`}
-              >
-                {isDone ? (
-                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fillRule="evenodd"
-                      d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                ) : (
-                  index + 1
+    <>
+      {/* Horizontal layout: tablet and up */}
+      <ol className="hidden items-center gap-0 md:flex">
+        {STEPS.map((step, index) => {
+          const state = stepStateFor(index, currentIndex);
+          return (
+            <li key={step} className={`flex items-center ${index > 0 ? "flex-1" : ""}`}>
+              {index > 0 && (
+                <div
+                  className={`mx-2 h-0.5 flex-1 rounded ${
+                    state === "done" || state === "active"
+                      ? "bg-zinc-900 dark:bg-white"
+                      : "bg-zinc-200 dark:bg-zinc-700"
+                  }`}
+                />
+              )}
+              <div className="flex flex-col items-center gap-1.5">
+                <Circle state={state} display={index + 1} />
+                <span
+                  className={`text-xs font-medium ${
+                    state === "active" || state === "done"
+                      ? "text-zinc-900 dark:text-zinc-100"
+                      : "text-zinc-400 dark:text-zinc-600"
+                  }`}
+                >
+                  {statusLabel(step)}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      {/* Vertical timeline: mobile */}
+      <ol className="md:hidden">
+        {STEPS.map((step, index) => {
+          const state = stepStateFor(index, currentIndex);
+          const isLast = index === STEPS.length - 1;
+          const nextState =
+            index + 1 < STEPS.length ? stepStateFor(index + 1, currentIndex) : "upcoming";
+          return (
+            <li key={step} className="flex">
+              <div className="flex flex-col items-center self-stretch">
+                <Circle state={state} display={index + 1} />
+                {!isLast && (
+                  <span
+                    className={`mt-2 w-0.5 flex-1 self-stretch rounded ${
+                      nextState === "done" || nextState === "active"
+                        ? "bg-zinc-900 dark:bg-white"
+                        : "bg-zinc-200 dark:bg-zinc-700"
+                    }`}
+                  />
                 )}
-              </span>
+              </div>
               <span
-                className={`text-xs font-medium ${
-                  isActive || isDone
+                className={`ml-3 pb-6 pt-1.5 text-sm font-medium ${
+                  state === "active" || state === "done"
                     ? "text-zinc-900 dark:text-zinc-100"
                     : "text-zinc-400 dark:text-zinc-600"
                 }`}
               >
                 {statusLabel(step)}
+                {state === "active" && (
+                  <span className="ml-2 inline-flex rounded-full bg-zinc-900 px-2 py-0.5 text-[10px] font-semibold text-white dark:bg-white dark:text-zinc-900">
+                    Current
+                  </span>
+                )}
               </span>
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }
