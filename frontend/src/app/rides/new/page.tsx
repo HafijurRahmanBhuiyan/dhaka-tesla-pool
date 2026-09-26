@@ -26,7 +26,9 @@ export default function NewRidePage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null);
   const [availableDrivers, setAvailableDrivers] = useState<AvailableDriver[] | null>(null);
-  const [loadingDrivers, setLoadingDrivers] = useState(false);
+  // Tracks which pickup zone the currently-loaded driver list belongs to, so the
+  // loading state can be derived instead of set synchronously from an effect.
+  const [driversZone, setDriversZone] = useState<string | null>(null);
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<FareEstimate | null>(null);
@@ -65,36 +67,34 @@ export default function NewRidePage() {
     };
   }, [authenticated, role, pickupZoneId]);
 
-  // Load available drivers when pickup zone changes
+  // Load available drivers when pickup zone changes. All state changes happen in
+  // promise callbacks (never synchronously in the effect body).
   useEffect(() => {
-    if (!pickupZoneId) {
-      setAvailableDrivers(null);
-      setSelectedDriverId(null);
-      return;
-    }
+    if (!pickupZoneId) return;
 
     let cancelled = false;
-    setLoadingDrivers(true);
-    setSelectedDriverId(null);
-
     apiClient
       .get<{ drivers: AvailableDriver[] }>(`/driver/available?pickupZoneId=${pickupZoneId}`)
       .then((data) => {
         if (!cancelled) {
           setAvailableDrivers(data.drivers);
+          setDriversZone(pickupZoneId);
         }
       })
       .catch(() => {
-        if (!cancelled) setAvailableDrivers([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingDrivers(false);
+        if (!cancelled) {
+          setAvailableDrivers([]);
+          setDriversZone(pickupZoneId);
+        }
       });
 
     return () => {
       cancelled = true;
     };
   }, [pickupZoneId]);
+
+  // The driver list is loading while it has no data for the currently selected zone.
+  const loadingDrivers = pickupZoneId !== "" && driversZone !== pickupZoneId;
 
   const sameZone = pickupZoneId !== "" && pickupZoneId === dropoffZoneId;
   const estimateReady = pickupZoneId !== "" && dropoffZoneId !== "" && !sameZone;
@@ -187,7 +187,10 @@ export default function NewRidePage() {
               id="pickupZoneId"
               label="Pickup Zone (Station)"
               value={pickupZoneId}
-              onChange={(e) => setPickupZoneId(e.target.value)}
+              onChange={(e) => {
+                setPickupZoneId(e.target.value);
+                setSelectedDriverId(null);
+              }}
               disabled={zones === null}
             >
               <option value="" disabled>
