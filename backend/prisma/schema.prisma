@@ -55,6 +55,8 @@ model Tesla {
   plateNickname String // e.g. "Bullet"
   seatCapacity  Int // total seats available on this vehicle
   isActive      Boolean  @default(true)
+  // Stamped on every online/offline status change; null until the first toggle.
+  lastActiveAt  DateTime?
   pools         Pool[]
 
   @@index([driverId])
