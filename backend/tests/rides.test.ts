@@ -545,9 +545,26 @@ describe('PATCH /api/rides/:id/cancel', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.ride.status).toBe('CANCELLED');
+    expect(res.body.ride.cancelledBy).toBe('PASSENGER');
+    expect(res.body.ride.cancellationReason).toBeNull();
+    expect(res.body.ride.fare.cancellationFeePoysha).toBe(0);
 
     const pool = await prisma.pool.findUnique({ where: { id: poolId } });
     expect(pool).toMatchObject({ status: 'CANCELLED', seatsUsed: 0 });
+  });
+
+  it('stores an optional reason when the passenger provides one', async () => {
+    const created = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+
+    const res = await request(app)
+      .patch(`/api/rides/${created.body.ride.id}/cancel`)
+      .set('Authorization', `Bearer ${passengerToken}`)
+      .send({ reason: 'Plans changed' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.ride.cancelledBy).toBe('PASSENGER');
+    expect(res.body.ride.cancellationReason).toBe('Plans changed');
+    expect(res.body.ride.fare.cancellationFeePoysha).toBe(0);
   });
 
   it('removes a rider from a shared pool and recomputes the survivor fare', async () => {
@@ -598,28 +615,84 @@ describe('PATCH /api/rides/:id/cancel', () => {
     expect(again.status).toBe(409);
   });
 
-  it('rejects cancelling once the driver has arrived or started the ride', async () => {
+  it('allows the passenger to cancel after the driver arrived, with a 10 Tk fee', async () => {
     const created = await makeRideRequest(passengerToken, GULSHAN, BANANI);
     const poolId = created.body.ride.pool.id;
     const rideId = created.body.ride.id;
 
-    const advanceRide = (status?: string) =>
-      request(app)
-        .patch(`/api/driver/rides/${rideId}/advance`)
-        .set('Authorization', `Bearer ${driverToken}`)
-        .send(status === undefined ? {} : { status });
-
-    const arrived = await advanceRide('DRIVER_ARRIVED');
+    const arrived = await request(app)
+      .patch(`/api/driver/rides/${rideId}/advance`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ status: 'DRIVER_ARRIVED' });
     expect(arrived.body.pool.rideRequests[0].status).toBe('DRIVER_ARRIVED');
 
-    const cancelArrived = await request(app)
+    const res = await request(app)
       .patch(`/api/rides/${rideId}/cancel`)
       .set('Authorization', `Bearer ${passengerToken}`);
-    expect(cancelArrived.status).toBe(409);
-    expect(cancelArrived.body.error).toBe('Cannot cancel a ride in status DRIVER_ARRIVED');
+    expect(res.status).toBe(200);
+    expect(res.body.ride.status).toBe('CANCELLED');
+    expect(res.body.ride.cancelledBy).toBe('PASSENGER');
+    expect(res.body.ride.cancellationReason).toBeNull();
+    expect(res.body.ride.fare.cancellationFeePoysha).toBe(1000);
 
-    const started = await advanceRide('STARTED');
-    expect(started.body.pool.rideRequests[0].status).toBe('STARTED');
+    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+    expect(pool).toMatchObject({ status: 'CANCELLED', seatsUsed: 0 });
+  });
+
+  it('charges the DRIVER_ARRIVED fee, releases the seat, and recomputes survivor fare', async () => {
+    const first = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const second = await makeRideRequest(otherPassengerToken, GULSHAN, MOKHAKALI);
+    const poolId = first.body.ride.pool.id;
+    const firstId = first.body.ride.id;
+    const secondId = second.body.ride.id;
+
+    // Both riders are picked up.
+    await request(app)
+      .patch(`/api/driver/rides/${firstId}/advance`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ status: 'DRIVER_ARRIVED' });
+    await request(app)
+      .patch(`/api/driver/rides/${secondId}/advance`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ status: 'DRIVER_ARRIVED' });
+
+    const cancelRes = await request(app)
+      .patch(`/api/rides/${secondId}/cancel`)
+      .set('Authorization', `Bearer ${otherPassengerToken}`);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelRes.body.ride.cancelledBy).toBe('PASSENGER');
+    expect(cancelRes.body.ride.fare.cancellationFeePoysha).toBe(1000);
+
+    // Seat released, pool stays open for the survivor.
+    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+    expect(pool).toMatchObject({ status: 'MATCHED', seatsUsed: 1 });
+
+    // The survivor's pool discount is gone: solo fare for Gulshan -> Banani.
+    const survivor = await request(app)
+      .get(`/api/rides/${firstId}`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(survivor.body.ride.fare).toMatchObject({
+      poolDiscountPoysha: 0,
+      totalFarePoysha: 5400,
+      cancellationFeePoysha: 0,
+    });
+  });
+
+  it('still rejects cancelling a STARTED ride with 409', async () => {
+    const created = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const poolId = created.body.ride.pool.id;
+    const rideId = created.body.ride.id;
+
+    for (const status of ['DRIVER_ARRIVED', 'STARTED']) {
+      const advanced = await request(app)
+        .patch(`/api/driver/rides/${rideId}/advance`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ status });
+      expect(advanced.status).toBe(200);
+    }
+    expect(
+      (await prisma.rideRequest.findUnique({ where: { id: rideId } }))?.status,
+    ).toBe('STARTED');
 
     const cancelStarted = await request(app)
       .patch(`/api/rides/${rideId}/cancel`)
@@ -629,8 +702,25 @@ describe('PATCH /api/rides/:id/cancel', () => {
 
     const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
     expect(ride?.status).toBe('STARTED');
-    // The pool itself stays OPEN (derived 'MATCHED') while a rider is active.
     const pool = await prisma.pool.findUnique({ where: { id: poolId } });
     expect(pool).toMatchObject({ status: 'MATCHED', seatsUsed: 1 });
+  });
+
+  it('rejects cancelling a COMPLETED ride with 409', async () => {
+    const created = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const rideId = created.body.ride.id;
+
+    for (const status of ['DRIVER_ARRIVED', 'STARTED', 'COMPLETED']) {
+      await request(app)
+        .patch(`/api/driver/rides/${rideId}/advance`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ status });
+    }
+
+    const res = await request(app)
+      .patch(`/api/rides/${rideId}/cancel`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Cannot cancel a ride in status COMPLETED');
   });
 });
