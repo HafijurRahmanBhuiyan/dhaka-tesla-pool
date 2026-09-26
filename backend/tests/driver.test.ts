@@ -502,4 +502,141 @@ describe('PATCH /api/driver/rides/:rideRequestId/cancel', () => {
     const res = await driverCancel(driverAToken, 99999, { reason: 'Missing' });
     expect(res.status).toBe(404);
   });
+
+  it('records a driver cancellation reason the passenger can read back', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+    const rideId = ride.body.ride.id;
+
+    await driverCancel(driverAToken, rideId, { reason: 'Heavy traffic' });
+
+    const asPassenger = await request(app)
+      .get(`/api/rides/${rideId}`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(asPassenger.status).toBe(200);
+    expect(asPassenger.body.ride).toMatchObject({
+      status: 'CANCELLED',
+      cancelledBy: 'DRIVER',
+      cancellationReason: 'Heavy traffic',
+    });
+  });
+});
+
+describe('GET /api/driver/rides/history', () => {
+  let driverAToken: string;
+  let driverBToken: string;
+  let passengerToken: string;
+  let passengerBToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const driverA = await createDriver({ phone: '01711112220', email: 'driver-a@test.dev' });
+    const driverB = await createDriver({ phone: '01711113330', email: 'driver-b@test.dev' });
+    const passenger = await createPassenger();
+    const passengerB = await createPassenger({
+      phone: '01711114440',
+      email: 'passenger-b@test.dev',
+    });
+    driverAToken = tokenFor(driverA);
+    driverBToken = tokenFor(driverB);
+    passengerToken = tokenFor(passenger);
+    passengerBToken = tokenFor(passengerB);
+  });
+
+  function makeRide(token: string, pickupZoneId: number, dropoffZoneId: number) {
+    return request(app)
+      .post('/api/rides')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pickupZoneId, dropoffZoneId, paymentMethod: 'CASH' });
+  }
+
+  it('returns an empty list when the driver has served no rides', async () => {
+    const res = await request(app)
+      .get('/api/driver/rides/history')
+      .set('Authorization', `Bearer ${driverAToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rides).toEqual([]);
+  });
+
+  it('returns every served ride across statuses, newest first, with passenger and fare', async () => {
+    const first = await makeRide(passengerToken, GULSHAN, BANANI);
+    // Complete the first ride so its passenger can book again (one active ride
+    // at a time per passenger).
+    for (const status of ['DRIVER_ARRIVED', 'STARTED', 'COMPLETED']) {
+      await request(app)
+        .patch(`/api/driver/rides/${first.body.ride.id}/advance`)
+        .set('Authorization', `Bearer ${driverAToken}`)
+        .send({ status });
+    }
+    const second = await makeRide(passengerBToken, BANANI, GULSHAN);
+    // Leave the second ride in-flight (MATCHED).
+
+    const res = await request(app)
+      .get('/api/driver/rides/history')
+      .set('Authorization', `Bearer ${driverAToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rides).toHaveLength(2);
+    expect(res.body.rides.map((r: { id: number }) => r.id)).toEqual([
+      second.body.ride.id,
+      first.body.ride.id,
+    ]);
+
+    const [newest, oldest] = res.body.rides;
+    expect(oldest).toMatchObject({
+      status: 'COMPLETED',
+      passenger: { name: 'John Rider' },
+      pickupZone: { name: 'Gulshan' },
+      dropoffZone: { name: 'Banani' },
+    });
+    expect(oldest.pool.tesla.plateNickname).toBe('Bullet');
+    expect(oldest.fare.totalFarePoysha).toBe(5400);
+    expect(newest).toMatchObject({
+      status: 'MATCHED',
+      passenger: { name: 'John Rider' },
+    });
+  });
+
+  it('only surfaces rides served on this driver\u2019s own Tesla', async () => {
+    await makeRide(passengerToken, GULSHAN, BANANI);
+
+    const resA = await request(app)
+      .get('/api/driver/rides/history')
+      .set('Authorization', `Bearer ${driverAToken}`);
+    expect(resA.body.rides).toHaveLength(1);
+
+    const resB = await request(app)
+      .get('/api/driver/rides/history')
+      .set('Authorization', `Bearer ${driverBToken}`);
+    expect(resB.body.rides).toEqual([]);
+  });
+
+  it('keeps cancelled rides in the history with their driver-facing reason', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+
+    await request(app)
+      .patch(`/api/driver/rides/${ride.body.ride.id}/cancel`)
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ reason: 'Passenger is not responding' });
+
+    const res = await request(app)
+      .get('/api/driver/rides/history')
+      .set('Authorization', `Bearer ${driverAToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.rides[0]).toMatchObject({
+      status: 'CANCELLED',
+      cancelledBy: 'DRIVER',
+      cancellationReason: 'Passenger is not responding',
+    });
+  });
+
+  it('rejects passengers and unauthenticated calls', async () => {
+    const asPassenger = await request(app)
+      .get('/api/driver/rides/history')
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(asPassenger.status).toBe(403);
+
+    const unauth = await request(app).get('/api/driver/rides/history');
+    expect(unauth.status).toBe(401);
+  });
 });

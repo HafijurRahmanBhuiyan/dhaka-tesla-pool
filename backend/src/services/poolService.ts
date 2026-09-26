@@ -26,6 +26,7 @@ interface RideForMatching {
   id: number;
   pickupZoneName: string;
   dropoffZoneName: string;
+  seatsRequested: number;
 }
 
 /**
@@ -66,6 +67,7 @@ async function loadRideWithZones(
     id: ride.id,
     pickupZoneName: ride.pickupZone.name,
     dropoffZoneName: ride.dropoffZone.name,
+    seatsRequested: ride.seatsRequested,
   };
 }
 
@@ -105,7 +107,7 @@ function findCompatiblePool(
   for (const pool of openPools) {
     const isCompatible = pool.members.some((member) => areRidesCompatible(ride, member));
     if (!isCompatible) continue;
-    if (pool.seatsUsed >= pool.tesla.seatCapacity) {
+    if (pool.seatsUsed + ride.seatsRequested > pool.tesla.seatCapacity) {
       hadFullCompatible = true;
       continue;
     }
@@ -133,6 +135,7 @@ export async function findOrCreatePoolForRide(
   rideRequestId: number,
   paymentMethod: PaymentMethod,
   preferredDriverId?: number,
+  seatsRequested = 1,
 ): Promise<{ poolId: number }> {
   return withSerializableRetry(async (tx) => {
     const ride = await loadRideWithZones(tx, rideRequestId);
@@ -161,7 +164,7 @@ export async function findOrCreatePoolForRide(
       if (existingPool) {
         await tx.$queryRaw`SELECT id FROM "Pool" WHERE id = ${existingPool.id} FOR UPDATE`;
 
-        if (existingPool.seatsUsed >= driverTesla.seatCapacity) {
+        if (existingPool.seatsUsed + seatsRequested > driverTesla.seatCapacity) {
           throw new ApiError(409, 'Selected driver has no seats available');
         }
 
@@ -179,7 +182,7 @@ export async function findOrCreatePoolForRide(
         poolId = existingPool.id;
         await tx.pool.update({
           where: { id: poolId },
-          data: { seatsUsed: { increment: 1 } },
+          data: { seatsUsed: { increment: seatsRequested } },
         });
         await tx.rideRequest.update({
           where: { id: ride.id },
@@ -192,8 +195,12 @@ export async function findOrCreatePoolForRide(
           actor: `pool-join:${poolId}`,
         });
       } else {
+        if (seatsRequested > driverTesla.seatCapacity) {
+          throw new ApiError(409, 'Selected driver has no seats available');
+        }
+
         const createdPool = await tx.pool.create({
-          data: { teslaId: driverTesla.id, status: 'MATCHED', seatsUsed: 1 },
+          data: { teslaId: driverTesla.id, status: 'MATCHED', seatsUsed: seatsRequested },
         });
         poolId = createdPool.id;
         await tx.rideRequest.update({
@@ -238,6 +245,7 @@ export async function findOrCreatePoolForRide(
             id: member.id,
             pickupZoneName: member.pickupZone.name,
             dropoffZoneName: member.dropoffZone.name,
+            seatsRequested: member.seatsRequested,
           })),
         }));
 
@@ -250,7 +258,7 @@ export async function findOrCreatePoolForRide(
         poolId = chosenPool.chosen.poolId;
         await tx.pool.update({
           where: { id: poolId },
-          data: { seatsUsed: { increment: 1 } },
+          data: { seatsUsed: { increment: seatsRequested } },
         });
         await tx.rideRequest.update({
           where: { id: ride.id },
@@ -282,9 +290,12 @@ export async function findOrCreatePoolForRide(
         });
 
         // A Tesla serves one pool at a time: only an idle active Tesla (no open
-        // MATCHED pool) can start a new pool.
+        // MATCHED pool) can start a new pool — and it must have enough free
+        // capacity for the full seat count being requested.
         const idleTesla = teslas.find(
-          (tesla) => !tesla.pools.some((pool) => pool.status === 'MATCHED'),
+          (tesla) =>
+            !tesla.pools.some((pool) => pool.status === 'MATCHED') &&
+            tesla.seatCapacity >= seatsRequested,
         );
 
         if (!idleTesla) {
@@ -297,7 +308,7 @@ export async function findOrCreatePoolForRide(
         }
 
         const createdPool = await tx.pool.create({
-          data: { teslaId: idleTesla.id, status: 'MATCHED', seatsUsed: 1 },
+          data: { teslaId: idleTesla.id, status: 'MATCHED', seatsUsed: seatsRequested },
         });
         poolId = createdPool.id;
 
@@ -321,10 +332,11 @@ export async function findOrCreatePoolForRide(
 
     // Seed the joining/new ride's fare with its true payment method before the
     // pool-wide recompute (which preserves each member's existing method), so a
-    // TESLAPAY request is never downgraded to the CASH fallback.
-    const pool = await tx.pool.findUnique({
-      where: { id: poolId },
-      select: { seatsUsed: true },
+    // TESLAPAY request is never downgraded to the CASH fallback. The pool
+    // discount threshold is "more than one active rider", so count members
+    // (not seats) — one passenger booking several seats alone gets no discount.
+    const memberCount = await tx.rideRequest.count({
+      where: { poolId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
     });
     await upsertFareForRide(
       tx,
@@ -332,7 +344,8 @@ export async function findOrCreatePoolForRide(
       ride.pickupZoneName,
       ride.dropoffZoneName,
       paymentMethod,
-      (pool?.seatsUsed ?? 1) > 1,
+      memberCount > 1,
+      seatsRequested,
     );
 
     await recomputePoolFares(tx, poolId);

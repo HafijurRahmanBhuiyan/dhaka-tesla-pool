@@ -27,15 +27,16 @@ export interface PoolState {
  *             completed.
  *   - CANCELLED when every member was cancelled (no ride ever completed).
  *
- * `seatsUsed` tracks the number of ACTIVE members, so a completed rider's seat
- * frees up for a mid-trip join. The pool transition is derived from the member
- * rides, never set independently, and is left untouched on the returned row
- * once a pool is terminal.
+ * `seatsUsed` tracks the count of ACTIVE seats across members (the sum of each
+ * active member's `seatsRequested`), so a completed rider's seat frees up for a
+ * mid-trip join. The pool transition is derived from the member rides, never set
+ * independently, and is left untouched on the returned row once a pool is
+ * terminal.
  */
 export async function recomputePoolState(tx: DbClient, poolId: number): Promise<PoolState> {
   const members = await tx.rideRequest.findMany({
     where: { poolId },
-    select: { status: true },
+    select: { status: true, seatsRequested: true },
   });
 
   const activeMembers = members.filter((m) => isActiveRideStatus(m.status));
@@ -43,7 +44,7 @@ export async function recomputePoolState(tx: DbClient, poolId: number): Promise<
 
   const state: PoolState = {
     status: activeMembers.length > 0 ? 'MATCHED' : anyCompleted ? 'COMPLETED' : 'CANCELLED',
-    seatsUsed: activeMembers.length,
+    seatsUsed: activeMembers.reduce((sum, m) => sum + m.seatsRequested, 0),
   };
 
   const pool = await tx.pool.findUnique({

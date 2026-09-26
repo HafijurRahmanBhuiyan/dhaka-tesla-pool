@@ -84,34 +84,63 @@ one wins; the loser receives the friendly message
 `No Tesla available to serve this ride`, which is used when no Tesla is free to
 start a new pool for an incompatible route).
 
+## Multi-seat booking
+
+A passenger can book more than one seat in a single request
+(`seatsRequested`, default 1):
+
+- `RideRequest.seatsRequested` counts the seats one booking holds. `Pool.seatsUsed`
+  is the **sum** of `seatsRequested` across active members, so a 2-seat booking
+  immediately fills two seats and completes/cancelled seats free back up for a
+  mid-trip join.
+- Matching capacity checks use `seatsUsed + seatsRequested > Tesla.seatCapacity`.
+  A brand-new pool is only created on an idle Tesla whose full capacity can fit
+  the requested seat count; a request bigger than any Tesla rejects with
+  `No Tesla available to serve this ride`.
+- A passenger may hold only **one active ride** at a time: creating a second
+  request while an earlier one is non-terminal rejects with 409
+  (`You already have an active ride. Cancel it before requesting another.`).
+  A failed match cleans up the transient `REQUESTED` ride so the passenger can
+  immediately retry.
+
 ## Fares
 
 Fares are distance-based and **estimated** — the distances in
 `backend/src/config/zoneDistance.ts` are hand-tailed estimates for deterministic
 hand-calculable pricing; they are not live-routed or traffic-adjusted.
 
-- Base fare: `3000` poysha (30 BDT).
+- Base fare: `3000` poysha (30 BDT) **per seat**.
 - Distance charge: `800` poysha (8 BDT) per **kilometre** (per `zoneDistance.ts`
-  table; symmetric).
-- Pool discount: `1000` poysha (10 BDT) subtracted when the pool has **more
-  than one active rider**; zero for a solo ride. The discount is applied when a
-  rider is priced and is not re-litigated when another rider later completes.
-- `total = base + km * 800 - discount`, always stored as integer poysha.
+  table; symmetric) **per seat**.
+- Pool discount: `1000` poysha (10 BDT) **per seat**, subtracted when the pool
+  has **more than one active rider**; zero for a solo ride. The discount is
+  applied when a rider is priced and is not re-litigated when another rider
+  later completes. It is per **rider**, not per seat: one passenger booking two
+  seats alone pays no discount.
+- `per seat = base + km * 800 - discount`, then scaled by `seatsRequested`:
+  `total = (base + km * 800 - discount) * seatsRequested`. All four stored fare
+  components (`baseFarePoysha`, `distanceChargePoysha`, `poolDiscountPoysha`,
+  `totalFarePoysha`) are scaled by the seat count so the breakdown stays
+  internally consistent.
+- `Fare.cancellationFeePoysha` (the flat 10 BDT "driver showed up" fee) stays a
+  flat **per-ride** fee and is not multiplied by seats.
 
 Example (PRD story): Nusrat books `Banani -> Mohakhali` (4 km) and Rafiq books
 `Banani -> Gulshan` (3 km) into the same pool:
 
-- Nusrat: `3000 + 4*800 - 1000 = 5200` poysha.
-- Rafiq: `3000 + 3*800 - 1000 = 4400` poysha.
+- Nusrat (1 seat): `(3000 + 4*800 - 1000) * 1 = 5200` poysha.
+- Rafiq (1 seat): `(3000 + 3*800 - 1000) * 1 = 4400` poysha.
+- If Nusrat had booked **2 seats** instead: `(3000 + 3200 - 1000) * 2 = 10400`.
 
 Passengers can preview a **solo** estimate (no discount yet) via the public,
 unauthenticated endpoint
 
-- `GET /api/fare-estimate?pickupZoneId=<id>&dropoffZoneId=<id>`
+- `GET /api/fare-estimate?pickupZoneId=<id>&dropoffZoneId=<id>&seatsRequested=<n>`
 
 which returns `{ estimate: { baseFarePoysha, distanceChargePoysha,
-poolDiscountPoysha: 0, totalFarePoysha } }`. The frontend notes that the final
-fare "may be discounted if pooled".
+poolDiscountPoysha: 0, totalFarePoysha } }` scaled by `seatsRequested`
+(default 1). The frontend notes that the final fare "may be discounted if
+pooled".
 
 ## Status transitions
 

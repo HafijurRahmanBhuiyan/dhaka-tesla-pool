@@ -65,4 +65,30 @@ describe('computeFare', () => {
     const fare = computeFare('Dhanmondi', 'Farmgate', true);
     expect(fare.totalFarePoysha).toBeGreaterThanOrEqual(0);
   });
+
+  it('multiplies base, distance, discount, and total by the seated count', () => {
+    // Banani -> Mohakhali is 4 km: (3000 + 4*800) * 2 = 12400.
+    const solo2 = computeFare('Banani', 'Mohakhali', false, 2);
+    expect(solo2).toEqual({
+      baseFarePoysha: 6000,
+      distanceChargePoysha: 6400,
+      poolDiscountPoysha: 0,
+      totalFarePoysha: 12400,
+    });
+
+    // The pool discount is applied per seat: (3000 + 3*800 - 1000) * 2 = 8800.
+    const pooled2 = computeFare('Banani', 'Gulshan', true, 2);
+    expect(pooled2).toEqual({
+      baseFarePoysha: 6000,
+      distanceChargePoysha: 4800,
+      poolDiscountPoysha: 2000,
+      totalFarePoysha: 8800,
+    });
+  });
+
+  it('defaults to a single seat when no seat count is given', () => {
+    const single = computeFare('Gulshan', 'Bashundhara', false);
+    const explicitSingle = computeFare('Gulshan', 'Bashundhara', false, 1);
+    expect(single).toEqual(explicitSingle);
+  });
 });

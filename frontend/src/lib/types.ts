@@ -89,6 +89,7 @@ export interface RideRequest {
   pickupZoneId: number;
   dropoffZoneId: number;
   status: RideStatus;
+  seatsRequested: number;
   cancelledBy: Role | null;
   cancellationReason: string | null;
   requestedAt: string;
@@ -113,6 +114,9 @@ export interface DriverPoolPassenger {
 export interface DriverPoolRide {
   id: number;
   status: RideStatus;
+  seatsRequested: number;
+  cancelledBy: Role | null;
+  cancellationReason: string | null;
   passenger: DriverPoolPassenger;
   pickupZone: Zone;
   dropoffZone: Zone;
@@ -141,6 +145,28 @@ export interface DriverStatus {
 
 export interface DriverStatusResponse {
   status: DriverStatus;
+}
+
+export interface DriverHistoryRide {
+  id: number;
+  status: RideStatus;
+  seatsRequested: number;
+  cancelledBy: Role | null;
+  cancellationReason: string | null;
+  requestedAt: string;
+  passenger: DriverPoolPassenger;
+  pickupZone: Zone;
+  dropoffZone: Zone;
+  fare: Fare | null;
+  pool: {
+    id: number;
+    status: RideStatus;
+    tesla: { id: number; plateNickname: string };
+  } | null;
+}
+
+export interface DriverHistoryResponse {
+  rides: DriverHistoryRide[];
 }
 
 export interface ZodIssue {

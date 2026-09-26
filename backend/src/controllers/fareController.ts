@@ -6,9 +6,9 @@ import { fareEstimateQuerySchema } from '../utils/validation';
 
 /**
  * Public, unauthenticated estimate for a potentially pooled ride. The estimate
- * is a SOLO price (no pool discount); the frontend notes that the actual fare
- * may be discounted if the ride mates into a pool. Distances are estimates, not
- * live-routed.
+ * is a SOLO price per seat (no pool discount) scaled by `seatsRequested`; the
+ * frontend notes that the actual fare may be discounted if the ride mates into
+ * a pool. Distances are estimates, not live-routed.
  */
 export const getFareEstimateHandler = async (req: Request, res: Response): Promise<void> => {
   const parsed = fareEstimateQuerySchema.safeParse(req.query);
@@ -16,7 +16,7 @@ export const getFareEstimateHandler = async (req: Request, res: Response): Promi
     throw new ApiError(400, 'pickupZoneId and dropoffZoneId are required numeric zone ids');
   }
 
-  const { pickupZoneId, dropoffZoneId } = parsed.data;
+  const { pickupZoneId, dropoffZoneId, seatsRequested } = parsed.data;
   if (pickupZoneId === dropoffZoneId) {
     throw new ApiError(400, 'dropoffZoneId must differ from pickupZoneId');
   }
@@ -30,6 +30,6 @@ export const getFareEstimateHandler = async (req: Request, res: Response): Promi
     throw new ApiError(400, 'Unknown pickup or dropoff zone');
   }
 
-  const draft = computeFare(pickupZone.name, dropoffZone.name, false);
+  const draft = computeFare(pickupZone.name, dropoffZone.name, false, seatsRequested);
   res.json({ estimate: draft });
 };

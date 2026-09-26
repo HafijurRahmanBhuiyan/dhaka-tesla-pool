@@ -5,13 +5,14 @@ import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
 import { findOrCreatePoolForRide } from './poolService';
 import { recomputePoolFares } from './fareService';
-import { recomputePoolState } from './poolStateService';
+import { recomputePoolState, TERMINAL_RIDE_STATUSES } from './poolStateService';
 
 export interface CreateRideInput {
   pickupZoneId: number;
   dropoffZoneId: number;
   paymentMethod: PaymentMethod;
   driverId?: number;
+  seatsRequested?: number;
 }
 
 const RIDE_DETAIL_INCLUDE = {
@@ -50,12 +51,29 @@ export async function createRide(
     throw new ApiError(400, 'Unknown pickup or dropoff zone');
   }
 
+  // A passenger may only have one ride in progress (REQUESTED/MATCHED/
+  // DRIVER_ARRIVED/STARTED). A second active request is rejected; the previous
+  // ride must be cancelled (or completed) first.
+  const activeRide = await prisma.rideRequest.findFirst({
+    where: { passengerId: userId, status: { notIn: TERMINAL_RIDE_STATUSES } },
+    select: { id: true },
+  });
+  if (activeRide) {
+    throw new ApiError(
+      409,
+      'You already have an active ride. Cancel it before requesting another.',
+    );
+  }
+
+  const seatsRequested = input.seatsRequested ?? 1;
+
   const ride = await prisma.rideRequest.create({
     data: {
       passengerId: userId,
       pickupZoneId: pickupZone.id,
       dropoffZoneId: dropoffZone.id,
       status: 'REQUESTED',
+      seatsRequested,
     },
   });
 
@@ -66,7 +84,15 @@ export async function createRide(
     actor: `user:${userId}`,
   });
 
-  await findOrCreatePoolForRide(ride.id, input.paymentMethod, input.driverId);
+  try {
+    await findOrCreatePoolForRide(ride.id, input.paymentMethod, input.driverId, seatsRequested);
+  } catch (error) {
+    // A failed match (no seats / no Tesla, or a lost seat race) must not leave a
+    // dangling REQUESTED ride behind: that would block the passenger's retry via
+    // the one-active-ride guard and clutter their history.
+    await prisma.rideRequest.delete({ where: { id: ride.id } }).catch(() => undefined);
+    throw error;
+  }
 
   return prisma.rideRequest.findUniqueOrThrow({
     where: { id: ride.id },

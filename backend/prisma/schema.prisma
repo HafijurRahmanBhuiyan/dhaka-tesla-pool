@@ -81,6 +81,10 @@ model RideRequest {
   dropoffZoneId Int
   dropoffZone   Zone                 @relation("RideRequestDropoffZone", fields: [dropoffZoneId], references: [id], onDelete: Restrict)
   status        RideStatus           @default(REQUESTED)
+  // How many seats this passenger books as one request (>= 1). A request
+  // reserves that many seats on the pool's Tesla, so seatsUsed counts the sum
+  // of seatsRequested across active members, and fares scale per seat.
+  seatsRequested Int                  @default(1)
   requestedAt   DateTime             @default(now())
   // Who initiated a cancellation (null until the ride is cancelled).
   cancelledBy         Role?

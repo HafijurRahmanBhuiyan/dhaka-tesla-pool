@@ -54,6 +54,35 @@ export async function getActivePools(driverId: number): Promise<PoolWithRides[]>
   });
 }
 
+const RIDE_HISTORY_INCLUDE = {
+  passenger: { select: { id: true, name: true, phone: true } },
+  pickupZone: true,
+  dropoffZone: true,
+  fare: true,
+  pool: {
+    select: {
+      id: true,
+      status: true,
+      tesla: { select: { id: true, plateNickname: true } },
+    },
+  },
+} as const;
+
+type RideHistoryEntry = Prisma.RideRequestGetPayload<{ include: typeof RIDE_HISTORY_INCLUDE }>;
+
+/**
+ * The driver's complete ride history: every RideRequest ever served on any of
+ * their Teslas, across all statuses (MATCHED, DRIVER_ARRIVED, STARTED,
+ * COMPLETED, CANCELLED), newest first. Used by the driver "Last rides" page.
+ */
+export async function getDriverRideHistory(driverId: number): Promise<RideHistoryEntry[]> {
+  return prisma.rideRequest.findMany({
+    where: { pool: { tesla: { driverId } } },
+    orderBy: { requestedAt: 'desc' },
+    include: RIDE_HISTORY_INCLUDE,
+  });
+}
+
 async function withConflictRetry<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {

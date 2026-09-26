@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiClient, ApiError, toastBus } from "@/lib/apiClient";
@@ -44,6 +45,13 @@ function isCancellable(ride: DriverPoolRide): boolean {
   return CANCELLABLE_STATUSES.includes(ride.status);
 }
 
+const CANCEL_REASON_OPTIONS = [
+  "Passenger is not responding",
+  "Passenger is late",
+  "Heavy traffic",
+  "Other",
+] as const;
+
 function formatLastActive(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
@@ -81,6 +89,7 @@ export function DriverDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [advancingId, setAdvancingId] = useState<number | null>(null);
   const [cancelPromptFor, setCancelPromptFor] = useState<number | null>(null);
+  const [cancelReasonOption, setCancelReasonOption] = useState("");
   const [cancelReason, setCancelReason] = useState("");
   const [cancellingId, setCancellingId] = useState<number | null>(null);
 
@@ -244,13 +253,15 @@ export function DriverDashboard() {
   }
 
   async function handleCancelRide(ride: DriverPoolRide) {
-    const reason = cancelReason.trim();
+    const reason =
+      cancelReasonOption === "Other" ? cancelReason.trim() : cancelReasonOption;
     if (!reason) return;
     setCancellingId(ride.id);
     try {
       await apiClient.patch(`/driver/rides/${ride.id}/cancel`, { reason });
       toastBus.emit(`Cancelled ${ride.passenger.name}'s ride.`, "success");
       setCancelPromptFor(null);
+      setCancelReasonOption("");
       setCancelReason("");
       await refreshPools();
     } catch (err) {
@@ -281,6 +292,16 @@ export function DriverDashboard() {
             Manage your location and advance passengers through their individual journey steps.
           </p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+        <Link
+          href="/driver/history"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--card-border)] bg-[var(--card)] px-3.5 py-2 text-xs font-semibold text-[var(--foreground)] shadow-sm transition-all hover:bg-[var(--muted)]"
+        >
+          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Ride History
+        </Link>
         <button
           type="button"
           onClick={() => void refreshPools()}
@@ -291,6 +312,7 @@ export function DriverDashboard() {
           </svg>
           Refresh
         </button>
+      </div>
       </div>
 
       {error && (
@@ -575,11 +597,23 @@ export function DriverDashboard() {
                               <p className="font-semibold text-[var(--foreground)]">
                                 {ride.passenger.name}
                               </p>
+                              {ride.seatsRequested > 1 && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                                  {ride.seatsRequested} seats
+                                </span>
+                              )}
                               <StatusBadge status={ride.status} />
                             </div>
                             <p className="text-xs text-[var(--muted-foreground)]">
                               📞 {ride.passenger.phone}
                             </p>
+                            {ride.status === "CANCELLED" && ride.cancellationReason && (
+                              <p className="text-xs font-medium text-red-600 dark:text-red-400">
+                                {ride.cancelledBy === "DRIVER"
+                                  ? `Cancelled by you: ${ride.cancellationReason}.`
+                                  : `Cancelled by passenger: ${ride.cancellationReason}.`}
+                              </p>
+                            )}
                             <div className="flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
                               <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
                                 📍 {ride.pickupZone.name}
@@ -600,6 +634,7 @@ export function DriverDashboard() {
                                 disabled={isAdvancing}
                                 onClick={() => {
                                   setCancelPromptFor(ride.id);
+                                  setCancelReasonOption("");
                                   setCancelReason("");
                                 }}
                                 className="font-semibold shadow-sm"
@@ -627,19 +662,39 @@ export function DriverDashboard() {
                                 Why are you cancelling {ride.passenger.name}&apos;s ride?
                               </p>
                               <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={cancelReason}
-                                  onChange={(e) => setCancelReason(e.target.value)}
-                                  placeholder="Reason (required)"
+                                <select
+                                  value={cancelReasonOption}
+                                  onChange={(e) => setCancelReasonOption(e.target.value)}
                                   disabled={cancellingId === ride.id}
                                   className="min-w-0 flex-1 rounded-lg border border-red-200 bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-400/20 disabled:opacity-60 dark:border-red-900"
-                                />
+                                >
+                                  <option value="" disabled>
+                                    Select a reason…
+                                  </option>
+                                  {CANCEL_REASON_OPTIONS.map((option) => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                                {cancelReasonOption === "Other" && (
+                                  <input
+                                    type="text"
+                                    value={cancelReason}
+                                    onChange={(e) => setCancelReason(e.target.value)}
+                                    placeholder="State your reason (required)"
+                                    disabled={cancellingId === ride.id}
+                                    className="min-w-0 flex-1 basis-full rounded-lg border border-red-200 bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-400/20 disabled:opacity-60 dark:border-red-900"
+                                  />
+                                )}
                                 <Button
                                   size="sm"
                                   variant="danger"
                                   loading={cancellingId === ride.id}
-                                  disabled={!cancelReason.trim()}
+                                  disabled={
+                                    !cancelReasonOption ||
+                                    (cancelReasonOption === "Other" && !cancelReason.trim())
+                                  }
                                   onClick={() => void handleCancelRide(ride)}
                                 >
                                   Confirm cancel
@@ -650,6 +705,7 @@ export function DriverDashboard() {
                                   disabled={cancellingId === ride.id}
                                   onClick={() => {
                                     setCancelPromptFor(null);
+                                    setCancelReasonOption("");
                                     setCancelReason("");
                                   }}
                                 >

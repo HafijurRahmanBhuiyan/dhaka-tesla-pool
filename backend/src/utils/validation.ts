@@ -88,6 +88,13 @@ export const createRideSchema = z
       .int('driverId must be a whole number')
       .positive('driverId must be a positive integer')
       .optional(),
+    seatsRequested: z
+      .number({ message: 'seatsRequested must be a number' })
+      .int('seatsRequested must be a whole number')
+      .min(1, 'seatsRequested must be at least 1')
+      .max(20, 'seatsRequested must be at most 20')
+      .optional()
+      .default(1),
   })
   .superRefine((data, ctx) => {
     if (data.pickupZoneId === data.dropoffZoneId) {
@@ -170,4 +177,11 @@ export const fareEstimateQuerySchema = z.object({
     .number({ message: 'dropoffZoneId must be a number' })
     .int('dropoffZoneId must be a whole number')
     .positive('dropoffZoneId must be a positive integer'),
+  seatsRequested: z.coerce
+    .number({ message: 'seatsRequested must be a number' })
+    .int('seatsRequested must be a whole number')
+    .min(1, 'seatsRequested must be at least 1')
+    .max(20, 'seatsRequested must be at most 20')
+    .optional()
+    .default(1),
 });

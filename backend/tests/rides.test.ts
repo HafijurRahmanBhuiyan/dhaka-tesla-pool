@@ -13,11 +13,30 @@ const DHAANMONDI = ZONE.pickup.Dhanmondi;
 const MIRPUR = ZONE.pickup.Mirpur;
 const UTTARA = ZONE.pickup.Uttara;
 
-function makeRideRequest(token: string, pickupZoneId: number, dropoffZoneId: number) {
+function makeRideRequest(
+  token: string,
+  pickupZoneId: number,
+  dropoffZoneId: number,
+  seatsRequested?: number,
+) {
   return request(app)
     .post('/api/rides')
     .set('Authorization', `Bearer ${token}`)
-    .send({ pickupZoneId, dropoffZoneId, paymentMethod: 'CASH' });
+    .send({
+      pickupZoneId,
+      dropoffZoneId,
+      paymentMethod: 'CASH',
+      ...(seatsRequested !== undefined ? { seatsRequested } : {}),
+    });
+}
+
+/** Walks a ride through a target status using the driver API (asserts 200). */
+async function advanceRideTo(token: string, rideId: number, status: string) {
+  const res = await request(app)
+    .patch(`/api/driver/rides/${rideId}/advance`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({ status });
+  expect(res.status).toBe(200);
 }
 
 describe('matching utils', () => {
@@ -375,6 +394,213 @@ describe('PRD story: Nusrat and Rafiq share a pool on Bullet', () => {
   });
 });
 
+describe('POST /api/rides - multi-seat booking', () => {
+  let passengerToken: string;
+  let otherPassengerToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    await createDriver();
+    const passenger = await createPassenger();
+    const otherPassenger = await createPassenger({
+      phone: '01733333330',
+      email: 'other-seat@test.dev',
+    });
+    passengerToken = tokenFor(passenger);
+    otherPassengerToken = tokenFor(otherPassenger);
+  });
+
+  it('books multiple seats in one request and scales the fare accordingly', async () => {
+    // Gulshan -> Banani = 3 km (2400 distance). Two seats: (3000 + 2400) * 2.
+    const res = await makeRideRequest(passengerToken, GULSHAN, BANANI, 2);
+
+    expect(res.status).toBe(201);
+    expect(res.body.ride.seatsRequested).toBe(2);
+    expect(res.body.ride.pool).toMatchObject({ status: 'MATCHED', seatsUsed: 2 });
+    expect(res.body.ride.fare).toMatchObject({
+      baseFarePoysha: 6000,
+      distanceChargePoysha: 4800,
+      poolDiscountPoysha: 0,
+      totalFarePoysha: 10800,
+    });
+  });
+
+  it('applies the pool discount per active rider, not per seat', async () => {
+    // A solo passenger booking two seats is still ONE rider: no pool discount,
+    // even though two seats are taken.
+    const res = await makeRideRequest(passengerToken, GULSHAN, BANANI, 2);
+
+    expect(res.status).toBe(201);
+    expect(res.body.ride.pool).toMatchObject({ seatsUsed: 2 });
+    expect(res.body.ride.fare).toMatchObject({
+      poolDiscountPoysha: 0,
+      totalFarePoysha: 10800,
+    });
+  });
+
+  it('prices a shared pool per seat for multi-seat members', async () => {
+    // Rider A books 2 seats on Banani -> Mohakhali (4 km); rider B books 1 seat
+    // on the compatible Banani -> Gulshan (3 km). Both are active riders, so
+    // both get the pool discount, scaled by their seat counts.
+    const a = await makeRideRequest(passengerToken, BANANI, MOKHAKALI, 2);
+    const b = await makeRideRequest(otherPassengerToken, BANANI, GULSHAN, 1);
+
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(b.body.ride.pool.id).toBe(a.body.ride.pool.id);
+    // 2 + 1 seats on a 3-seat Bullet.
+    expect(b.body.ride.pool).toMatchObject({ seatsUsed: 3 });
+
+    // A: (3000 + 3200 - 1000) * 2 = 10400.
+    expect(b.body.ride.fare).toMatchObject({
+      baseFarePoysha: 3000,
+      distanceChargePoysha: 2400,
+      poolDiscountPoysha: 1000,
+      totalFarePoysha: 4400,
+    });
+
+    const aReloaded = await request(app)
+      .get(`/api/rides/${a.body.ride.id}`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(aReloaded.body.ride.fare).toMatchObject({
+      baseFarePoysha: 6000,
+      distanceChargePoysha: 6400,
+      poolDiscountPoysha: 2000,
+      totalFarePoysha: 10400,
+    });
+  });
+
+  it('rejects a multi-seat request that exceeds any Tesla capacity', async () => {
+    // Bullet seats 3; asking for 4 seats cannot be served by any Tesla. The
+    // failed booking leaves no ride row behind, so the passenger can retry.
+    const res = await makeRideRequest(passengerToken, GULSHAN, BANANI, 4);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('No Tesla available to serve this ride');
+
+    const rides = await prisma.rideRequest.count();
+    expect(rides).toBe(0);
+
+    const retry = await makeRideRequest(passengerToken, GULSHAN, BANANI, 1);
+    expect(retry.status).toBe(201);
+  });
+
+  it('rejects a smaller multi-seat join once only one seat remains free', async () => {
+    // Bullet seats 3: rider A holds 2 seats, leaving 1 free. A 2-seat join for
+    // the same compatible route must be refused with the seat-race message.
+    await makeRideRequest(passengerToken, BANANI, MOKHAKALI, 2);
+
+    const join = await makeRideRequest(otherPassengerToken, BANANI, GULSHAN, 2);
+    expect(join.status).toBe(409);
+    expect(join.body.error).toBe('Seat no longer available. Please try again.');
+  });
+
+  it('accepts a multi-seat join that exactly fits the remaining seats', async () => {
+    // Rider A books 1 seat, leaving 2 free; rider B grabs both with one request.
+    const a = await makeRideRequest(passengerToken, BANANI, MOKHAKALI, 1);
+    const b = await makeRideRequest(otherPassengerToken, BANANI, GULSHAN, 2);
+
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(b.body.ride.pool.id).toBe(a.body.ride.pool.id);
+    expect(b.body.ride.pool).toMatchObject({ seatsUsed: 3 });
+  });
+
+  it('frees all reserved seats when a multi-seat ride is cancelled', async () => {
+    const a = await makeRideRequest(passengerToken, BANANI, MOKHAKALI, 2);
+    const poolId = a.body.ride.pool.id;
+
+    const cancel = await request(app)
+      .patch(`/api/rides/${a.body.ride.id}/cancel`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(cancel.status).toBe(200);
+
+    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+    expect(pool).toMatchObject({ status: 'CANCELLED', seatsUsed: 0 });
+  });
+
+  it('never overbooks seats when a multi-seat and single-seat request race', async () => {
+    // Bullet seats 3; rider A takes 1 seat. Two racers compete for the last
+    // two seats: one wants 2 seats, the other 1. Exactly one may win.
+    await makeRideRequest(passengerToken, BANANI, MOKHAKALI, 1);
+
+    const twoSeatUser = await createPassenger({ phone: '01744444449', email: 'race-two@test.dev' });
+    const oneSeatUser = await createPassenger({ phone: '01744444448', email: 'race-one@test.dev' });
+
+    const results = await Promise.all([
+      makeRideRequest(tokenFor(twoSeatUser), BANANI, GULSHAN, 2),
+      makeRideRequest(tokenFor(oneSeatUser), BANANI, GULSHAN, 1),
+    ]);
+
+    const accepted = results.filter((res) => res.status === 201);
+    const rejected = results.filter((res) => res.status === 409);
+    expect(accepted).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].body.error).toBe('Seat no longer available. Please try again.');
+
+    const pools = await prisma.pool.findMany({
+      where: { status: 'MATCHED' },
+      include: { tesla: true },
+    });
+    for (const pool of pools) {
+      expect(pool.seatsUsed).toBeLessThanOrEqual(pool.tesla.seatCapacity);
+    }
+  });
+});
+
+describe('POST /api/rides - one active ride per passenger', () => {
+  let passengerToken: string;
+  let driverToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const driver = await createDriver();
+    const passenger = await createPassenger();
+    passengerToken = tokenFor(passenger);
+    driverToken = tokenFor(driver);
+  });
+
+  it('rejects a second active ride for the same passenger with 409', async () => {
+    const first = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    expect(first.status).toBe(201);
+
+    const second = await makeRideRequest(passengerToken, DHAANMONDI, MIRPUR);
+    expect(second.status).toBe(409);
+    expect(second.body.error).toBe(
+      'You already have an active ride. Cancel it before requesting another.',
+    );
+  });
+
+  it('allows a new ride after the passenger cancels the active one', async () => {
+    const first = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const cancel = await request(app)
+      .patch(`/api/rides/${first.body.ride.id}/cancel`)
+      .set('Authorization', `Bearer ${passengerToken}`);
+    expect(cancel.status).toBe(200);
+
+    const second = await makeRideRequest(passengerToken, DHAANMONDI, MIRPUR);
+    expect(second.status).toBe(201);
+  });
+
+  it('enforces the guard per passenger, not globally', async () => {
+    const other = await createPassenger({ phone: '01766661111', email: 'other-guard@test.dev' });
+    const otherToken = tokenFor(other);
+
+    await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    const second = await makeRideRequest(otherToken, GULSHAN, MOKHAKALI);
+    expect(second.status).toBe(201);
+  });
+
+  it('lets the same passenger book again once a ride reaches a terminal status', async () => {
+    const completed = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    for (const status of ['DRIVER_ARRIVED', 'STARTED', 'COMPLETED']) {
+      await advanceRideTo(driverToken, completed.body.ride.id, status);
+    }
+
+    const again = await makeRideRequest(passengerToken, GULSHAN, MOKHAKALI);
+    expect(again.status).toBe(201);
+  });
+});
+
 describe('GET /api/zones', () => {
   it('returns the seeded zones ordered by name', async () => {
     await resetDb();
@@ -401,10 +627,11 @@ describe('GET /api/zones', () => {
 describe('GET /api/rides (my rides)', () => {
   let passengerToken: string;
   let otherPassengerToken: string;
+  let driverAToken: string;
 
   beforeEach(async () => {
     await resetDb();
-    await createDriver();
+    const driverA = await createDriver();
     await createDriver({
       phone: '01733333330',
       email: 'ram@test.dev',
@@ -415,6 +642,7 @@ describe('GET /api/rides (my rides)', () => {
     const other = await createPassenger({ phone: '01777777770', email: 'other-me@test.dev' });
     passengerToken = tokenFor(passenger);
     otherPassengerToken = tokenFor(other);
+    driverAToken = tokenFor(driverA);
   });
 
   it('returns 401 without a token', async () => {
@@ -424,7 +652,17 @@ describe('GET /api/rides (my rides)', () => {
 
   it('returns only the logged-in passenger\u2019s own rides, newest first', async () => {
     const first = await makeRideRequest(passengerToken, GULSHAN, BANANI);
+    // One active ride at a time is enforced, so finish the first trip before
+    // the passenger books again.
+    for (const status of ['DRIVER_ARRIVED', 'STARTED', 'COMPLETED']) {
+      const advanced = await request(app)
+        .patch(`/api/driver/rides/${first.body.ride.id}/advance`)
+        .set('Authorization', `Bearer ${driverAToken}`)
+        .send({ status });
+      expect(advanced.status).toBe(200);
+    }
     const second = await makeRideRequest(passengerToken, DHAANMONDI, MIRPUR);
+    expect(second.status).toBe(201);
 
     const res = await request(app)
       .get('/api/rides')
