@@ -8,7 +8,12 @@ import type { RideRequest, Role } from "@/lib/types";
 import { formatDateTime, poyshaToTaka } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 
-const STATUS_ORDER = ["REQUESTED", "MATCHED", "DRIVER_ARRIVED", "STARTED", "COMPLETED", "CANCELLED"];
+// "Latest update" is the most recent status transition recorded for the ride;
+// rides created without any transition yet fall back to their request time.
+function lastUpdatedAt(ride: RideRequest): number {
+  const last = ride.statusHistory[ride.statusHistory.length - 1];
+  return last ? new Date(last.changedAt).getTime() : new Date(ride.requestedAt).getTime();
+}
 
 function RideCardSkeleton() {
   return (
@@ -127,9 +132,6 @@ export default function RidesPage() {
     return () => { cancelled = true; };
   }, [phase]);
 
-  const activeRides = rides?.filter((r) => !["COMPLETED", "CANCELLED"].includes(r.status)) ?? [];
-  const pastRides = rides?.filter((r) => ["COMPLETED", "CANCELLED"].includes(r.status)) ?? [];
-
   if (phase === "auth" || rides === null) {
     return (
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8">
@@ -148,6 +150,10 @@ export default function RidesPage() {
       </main>
     );
   }
+
+  // Every ride, regardless of status, is ordered by its latest update so the
+  // most recently changed ride is always at the top.
+  const sortedRides = [...rides].sort((a, b) => lastUpdatedAt(b) - lastUpdatedAt(a));
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8">
@@ -211,34 +217,10 @@ export default function RidesPage() {
           </Link>
         </div>
       ) : (
-        <div className="space-y-8">
-          {activeRides.length > 0 && (
-            <section>
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-                Active
-              </h2>
-              <div className="grid gap-3">
-                {activeRides.map((ride) => (
-                  <RideCard key={ride.id} ride={ride} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {pastRides.length > 0 && (
-            <section>
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-                Past rides
-              </h2>
-              <div className="grid gap-3">
-                {pastRides
-                  .sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status))
-                  .map((ride) => (
-                    <RideCard key={ride.id} ride={ride} />
-                  ))}
-              </div>
-            </section>
-          )}
+        <div className="grid gap-3">
+          {sortedRides.map((ride) => (
+            <RideCard key={ride.id} ride={ride} />
+          ))}
         </div>
       )}
     </main>
