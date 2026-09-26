@@ -22,12 +22,12 @@ const RIDE_WITH_PASSENGER_INCLUDE = {
   fare: true,
 } as const;
 
-// Active pools keep every non-cancelled rider attached (including COMPLETED
-// ones) so the driver can see each rider's own live status and reconcile fares.
+// Active pools keep EVERY rider attached (including COMPLETED and CANCELLED
+// ones) so the driver can see each rider's own live status, reconcile fares,
+// and acknowledge in place that a rider cancelled.
 const POOL_WITH_RIDES_INCLUDE = {
   tesla: { select: { id: true, plateNickname: true, seatCapacity: true } },
   rideRequests: {
-    where: { status: { notIn: ['CANCELLED' as RideStatus] as RideStatus[] } },
     orderBy: { id: 'asc' },
     include: RIDE_WITH_PASSENGER_INCLUDE,
   },
