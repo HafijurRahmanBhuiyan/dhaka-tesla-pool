@@ -2,6 +2,16 @@ import { type Prisma, type PrismaClient, type RideStatus } from '@prisma/client'
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
+/**
+ * Single source of truth for "is this ride still active?". A ride keeps a pool
+ * (and its Tesla) busy until it reaches a terminal status.
+ */
+export const TERMINAL_RIDE_STATUSES: RideStatus[] = ['COMPLETED', 'CANCELLED'];
+
+export function isActiveRideStatus(status: RideStatus): boolean {
+  return !TERMINAL_RIDE_STATUSES.includes(status);
+}
+
 export interface PoolState {
   status: RideStatus;
   seatsUsed: number;
@@ -28,7 +38,7 @@ export async function recomputePoolState(tx: DbClient, poolId: number): Promise<
     select: { status: true },
   });
 
-  const activeMembers = members.filter((m) => m.status !== 'COMPLETED' && m.status !== 'CANCELLED');
+  const activeMembers = members.filter((m) => isActiveRideStatus(m.status));
   const anyCompleted = members.some((m) => m.status === 'COMPLETED');
 
   const state: PoolState = {
