@@ -32,6 +32,34 @@ describe('GET /api/fare-estimate', () => {
     expect(res.body.estimate.totalFarePoysha).toBe(5400);
   });
 
+  it('scales the estimate by seatsRequested', async () => {
+    // Banani -> Mohakhali = 4 km, solo base 6200. Two seats => 12400, with each
+    // component (base 3000, distance 3200) doubled.
+    const res = await request(app).get(
+      '/api/fare-estimate?pickupZoneId=1&dropoffZoneId=3&seatsRequested=2',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.estimate).toEqual({
+      baseFarePoysha: 6000,
+      distanceChargePoysha: 6400,
+      poolDiscountPoysha: 0,
+      totalFarePoysha: 12400,
+    });
+  });
+
+  it('rejects invalid seatsRequested values with 400', async () => {
+    const zero = await request(app).get(
+      '/api/fare-estimate?pickupZoneId=1&dropoffZoneId=3&seatsRequested=0',
+    );
+    expect(zero.status).toBe(400);
+
+    const notNumeric = await request(app).get(
+      '/api/fare-estimate?pickupZoneId=1&dropoffZoneId=3&seatsRequested=abc',
+    );
+    expect(notNumeric.status).toBe(400);
+  });
+
   it('rejects missing or invalid query params with 400', async () => {
     const missing = await request(app).get('/api/fare-estimate');
     expect(missing.status).toBe(400);
