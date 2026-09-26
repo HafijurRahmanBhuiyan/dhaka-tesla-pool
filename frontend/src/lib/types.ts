@@ -128,6 +128,18 @@ export interface ActivePoolsResponse {
   pools: DriverPool[];
 }
 
+export interface DriverStatus {
+  teslaId: number;
+  isActive: boolean;
+  lastActiveAt: string | null;
+  seatCapacity: number;
+  seatsUsed: number;
+}
+
+export interface DriverStatusResponse {
+  status: DriverStatus;
+}
+
 export interface ZodIssue {
   field: string;
   message: string;
