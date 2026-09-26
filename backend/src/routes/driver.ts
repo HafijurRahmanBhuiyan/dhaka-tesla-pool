@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   advanceRideHandler,
+  cancelRideDriverHandler,
   getActivePoolsHandler,
   getAvailableDriversHandler,
   getDriverLocationHandler,
@@ -13,6 +14,7 @@ import { validate } from '../middlewares/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import {
   advanceRideSchema,
+  cancelRideDriverSchema,
   updateDriverLocationSchema,
   updateDriverStatusSchema,
 } from '../utils/validation';
@@ -45,6 +47,13 @@ router.patch(
   requireRole('DRIVER'),
   validate(advanceRideSchema),
   asyncHandler(advanceRideHandler),
+);
+router.patch(
+  '/rides/:rideRequestId/cancel',
+  requireAuth,
+  requireRole('DRIVER'),
+  validate(cancelRideDriverSchema),
+  asyncHandler(cancelRideDriverHandler),
 );
 router.get(
   '/location',

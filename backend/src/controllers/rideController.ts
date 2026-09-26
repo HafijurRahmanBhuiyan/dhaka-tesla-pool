@@ -5,7 +5,7 @@ import {
   getRideForUser,
   listRidesForPassenger,
 } from '../services/rideService';
-import type { CreateRideInput } from '../utils/validation';
+import type { CancelRideInput, CreateRideInput } from '../utils/validation';
 
 export const createRideHandler = async (req: Request, res: Response): Promise<void> => {
   const ride = await createRide(req.user!.id, req.body as CreateRideInput);
@@ -23,6 +23,8 @@ export const getRide = async (req: Request, res: Response): Promise<void> => {
 };
 
 export const cancelRideHandler = async (req: Request, res: Response): Promise<void> => {
-  const ride = await cancelRide(req.user!.id, Number(req.params.id));
+  const ride = await cancelRide(req.user!.id, Number(req.params.id), {
+    reason: (req.body as CancelRideInput | undefined)?.reason,
+  });
   res.json({ ride });
 };

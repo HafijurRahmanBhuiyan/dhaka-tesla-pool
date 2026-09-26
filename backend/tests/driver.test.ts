@@ -364,3 +364,142 @@ describe('PATCH /api/driver/rides/:rideRequestId/advance', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('PATCH /api/driver/rides/:rideRequestId/cancel', () => {
+  let driverAToken: string;
+  let driverBToken: string;
+  let passengerToken: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const driverA = await createDriver({ phone: '01711112220', email: 'driver-a@test.dev' });
+    const driverB = await createDriver({ phone: '01711113330', email: 'driver-b@test.dev' });
+    const passenger = await createPassenger();
+    driverAToken = tokenFor(driverA);
+    driverBToken = tokenFor(driverB);
+    passengerToken = tokenFor(passenger);
+  });
+
+  function makeRide(token: string, pickupZoneId: number, dropoffZoneId: number) {
+    return request(app)
+      .post('/api/rides')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pickupZoneId, dropoffZoneId, paymentMethod: 'CASH' });
+  }
+
+  function driverCancel(token: string, rideRequestId: number, body: object = {}) {
+    return request(app)
+      .patch(`/api/driver/rides/${rideRequestId}/cancel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(body);
+  }
+
+  it('rejects a driver cancel without a reason (400)', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+    await request(app)
+      .patch(`/api/driver/rides/${ride.body.ride.id}/advance`)
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ status: 'DRIVER_ARRIVED' });
+
+    const res = await driverCancel(driverAToken, ride.body.ride.id, {});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Validation failed');
+
+    const reloaded = await prisma.rideRequest.findUnique({ where: { id: ride.body.ride.id } });
+    expect(reloaded?.status).toBe('DRIVER_ARRIVED');
+  });
+
+  it('lets the driver cancel a DRIVER_ARRIVED ride with a reason and no fee', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+    const rideId = ride.body.ride.id;
+    const poolId = ride.body.ride.pool.id;
+
+    await request(app)
+      .patch(`/api/driver/rides/${rideId}/advance`)
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ status: 'DRIVER_ARRIVED' });
+
+    const res = await driverCancel(driverAToken, rideId, { reason: 'Passenger no-show' });
+    expect(res.status).toBe(200);
+    expect(res.body.ride.status).toBe('CANCELLED');
+    expect(res.body.ride.cancelledBy).toBe('DRIVER');
+    expect(res.body.ride.cancellationReason).toBe('Passenger no-show');
+    expect(res.body.ride.fare.cancellationFeePoysha).toBe(0);
+
+    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+    expect(pool).toMatchObject({ status: 'CANCELLED', seatsUsed: 0 });
+  });
+
+  it('lets the driver cancel a MATCHED ride free of charge with a reason', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+
+    const res = await driverCancel(driverAToken, ride.body.ride.id, {
+      reason: 'Route changed',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.ride.status).toBe('CANCELLED');
+    expect(res.body.ride.cancelledBy).toBe('DRIVER');
+    expect(res.body.ride.cancellationReason).toBe('Route changed');
+    expect(res.body.ride.fare.cancellationFeePoysha).toBe(0);
+  });
+
+  it('forbids a driver from cancelling a ride on another driver\u2019s Tesla', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+    const rideId = ride.body.ride.id;
+
+    const res = await driverCancel(driverBToken, rideId, { reason: 'Not mine' });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('This pool belongs to another driver');
+
+    const reloaded = await prisma.rideRequest.findUnique({ where: { id: rideId } });
+    expect(reloaded?.status).toBe('MATCHED');
+  });
+
+  it('rejects a driver cancel of a STARTED ride with 409', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+    const rideId = ride.body.ride.id;
+
+    await request(app)
+      .patch(`/api/driver/rides/${rideId}/advance`)
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ status: 'DRIVER_ARRIVED' });
+    await request(app)
+      .patch(`/api/driver/rides/${rideId}/advance`)
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ status: 'STARTED' });
+
+    const res = await driverCancel(driverAToken, rideId, { reason: 'Too late now' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Cannot cancel a ride in status STARTED');
+  });
+
+  it('rejects cancelling an already-cancelled ride with 409', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+    const rideId = ride.body.ride.id;
+
+    await driverCancel(driverAToken, rideId, { reason: 'Plans changed' });
+
+    const again = await driverCancel(driverAToken, rideId, { reason: 'Still cancelled' });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe('Cannot cancel a ride in status CANCELLED');
+  });
+
+  it('rejects passengers and unauthenticated calls', async () => {
+    const ride = await makeRide(passengerToken, GULSHAN, BANANI);
+
+    const asPassenger = await driverCancel(passengerToken, ride.body.ride.id, {
+      reason: 'Impersonating',
+    });
+    expect(asPassenger.status).toBe(403);
+
+    const unauth = await request(app)
+      .patch(`/api/driver/rides/${ride.body.ride.id}/cancel`)
+      .send({ reason: 'No token' });
+    expect(unauth.status).toBe(401);
+  });
+
+  it('returns 404 for an unknown ride', async () => {
+    const res = await driverCancel(driverAToken, 99999, { reason: 'Missing' });
+    expect(res.status).toBe(404);
+  });
+});

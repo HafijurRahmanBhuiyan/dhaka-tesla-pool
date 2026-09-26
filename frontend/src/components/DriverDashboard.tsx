@@ -38,6 +38,12 @@ function advanceLabelFor(ride: DriverPoolRide): string | null {
   return ADVANCE_LABELS[ride.status] ?? null;
 }
 
+const CANCELLABLE_STATUSES: RideStatus[] = ["REQUESTED", "MATCHED", "DRIVER_ARRIVED"];
+
+function isCancellable(ride: DriverPoolRide): boolean {
+  return CANCELLABLE_STATUSES.includes(ride.status);
+}
+
 function formatLastActive(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
@@ -74,6 +80,9 @@ export function DriverDashboard() {
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancingId, setAdvancingId] = useState<number | null>(null);
+  const [cancelPromptFor, setCancelPromptFor] = useState<number | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
 
   // Auth gate
   useEffect(() => {
@@ -231,6 +240,26 @@ export function DriverDashboard() {
       }
     } finally {
       setAdvancingId(null);
+    }
+  }
+
+  async function handleCancelRide(ride: DriverPoolRide) {
+    const reason = cancelReason.trim();
+    if (!reason) return;
+    setCancellingId(ride.id);
+    try {
+      await apiClient.patch(`/driver/rides/${ride.id}/cancel`, { reason });
+      toastBus.emit(`Cancelled ${ride.passenger.name}'s ride.`, "success");
+      setCancelPromptFor(null);
+      setCancelReason("");
+      await refreshPools();
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 401) {
+        toastBus.emit(err.message, "error");
+        await refreshPools();
+      }
+    } finally {
+      setCancellingId(null);
     }
   }
 
@@ -487,7 +516,7 @@ export function DriverDashboard() {
       ) : (
         <div className="space-y-6">
           {pools.map((pool) => {
-            const rides = pool.rideRequests.filter((ride) => ride.status !== "CANCELLED");
+            const rides = pool.rideRequests;
             const seatsAvailable = pool.tesla.seatCapacity - pool.seatsUsed;
 
             return (
@@ -534,7 +563,12 @@ export function DriverDashboard() {
                     const actionLabel = advanceLabelFor(ride);
                     const isAdvancing = advancingId === ride.id;
                     return (
-                      <div key={ride.id} className="p-6 transition-colors hover:bg-[var(--muted)]/20">
+                      <div
+                        key={ride.id}
+                        className={`p-6 transition-colors hover:bg-[var(--muted)]/20 ${
+                          ride.status === "CANCELLED" ? "opacity-70" : ""
+                        }`}
+                      >
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="space-y-1.5">
                             <div className="flex flex-wrap items-center gap-2">
@@ -557,17 +591,73 @@ export function DriverDashboard() {
                             </div>
                           </div>
 
-                          {actionLabel && (
-                            <Button
-                              size="sm"
-                              loading={isAdvancing}
-                              onClick={() => void handleAdvance(ride)}
-                              className="bg-amber-500 hover:bg-amber-400 text-white font-semibold shadow-sm"
-                            >
-                              {actionLabel}
-                            </Button>
-                          )}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isCancellable(ride) && (
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                loading={cancellingId === ride.id}
+                                disabled={isAdvancing}
+                                onClick={() => {
+                                  setCancelPromptFor(ride.id);
+                                  setCancelReason("");
+                                }}
+                                className="font-semibold shadow-sm"
+                              >
+                                Cancel This Ride
+                              </Button>
+                            )}
+                            {actionLabel && (
+                              <Button
+                                size="sm"
+                                loading={isAdvancing}
+                                onClick={() => void handleAdvance(ride)}
+                                className="bg-amber-500 hover:bg-amber-400 text-white font-semibold shadow-sm"
+                              >
+                                {actionLabel}
+                              </Button>
+                            )}
+                          </div>
                         </div>
+
+                        {isCancellable(ride) &&
+                          cancelPromptFor === ride.id && (
+                            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950">
+                              <p className="text-xs font-medium text-red-700 dark:text-red-300">
+                                Why are you cancelling {ride.passenger.name}&apos;s ride?
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={cancelReason}
+                                  onChange={(e) => setCancelReason(e.target.value)}
+                                  placeholder="Reason (required)"
+                                  disabled={cancellingId === ride.id}
+                                  className="min-w-0 flex-1 rounded-lg border border-red-200 bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-400/20 disabled:opacity-60 dark:border-red-900"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="danger"
+                                  loading={cancellingId === ride.id}
+                                  disabled={!cancelReason.trim()}
+                                  onClick={() => void handleCancelRide(ride)}
+                                >
+                                  Confirm cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={cancellingId === ride.id}
+                                  onClick={() => {
+                                    setCancelPromptFor(null);
+                                    setCancelReason("");
+                                  }}
+                                >
+                                  Keep
+                                </Button>
+                              </div>
+                            </div>
+                          )}
 
                         {ride.fare ? (
                           <div className="mt-4">

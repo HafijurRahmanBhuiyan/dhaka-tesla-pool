@@ -8,7 +8,7 @@ import {
 import { requireAuth, requireRole } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
 import { asyncHandler } from '../utils/asyncHandler';
-import { createRideSchema } from '../utils/validation';
+import { cancelRideSchema, createRideSchema } from '../utils/validation';
 
 const router = Router();
 
@@ -21,6 +21,12 @@ router.post(
 );
 router.get('/', requireAuth, asyncHandler(listRides));
 router.get('/:id', requireAuth, asyncHandler(getRide));
-router.patch('/:id/cancel', requireAuth, requireRole('PASSENGER'), asyncHandler(cancelRideHandler));
+router.patch(
+  '/:id/cancel',
+  requireAuth,
+  requireRole('PASSENGER'),
+  validate(cancelRideSchema),
+  asyncHandler(cancelRideHandler),
+);
 
 export default router;
