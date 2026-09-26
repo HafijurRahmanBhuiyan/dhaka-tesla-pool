@@ -82,6 +82,9 @@ model RideRequest {
   dropoffZone   Zone                 @relation("RideRequestDropoffZone", fields: [dropoffZoneId], references: [id], onDelete: Restrict)
   status        RideStatus           @default(REQUESTED)
   requestedAt   DateTime             @default(now())
+  // Who initiated a cancellation (null until the ride is cancelled).
+  cancelledBy         Role?
+  cancellationReason  String?
   // A request may be pooled into a matching pool, or standalone (null).
   poolId        Int?
   pool          Pool?                @relation(fields: [poolId], references: [id], onDelete: SetNull)
@@ -124,6 +127,9 @@ model Fare {
   distanceChargePoysha Int
   poolDiscountPoysha   Int
   totalFarePoysha      Int
+  // Flat fee charged when a passenger cancels after the driver has arrived
+  // (0 otherwise). Added on top of totalFarePoysha at display time.
+  cancellationFeePoysha Int             @default(0)
   paymentMethod        PaymentMethod
   // Settlement flags. CASH is reconciled by the driver and marked settled in
   // lieu of a real payment gateway; TESLAPAY is a simulated wallet that is
