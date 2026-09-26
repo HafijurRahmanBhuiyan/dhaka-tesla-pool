@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type { PaymentMethod } from '@prisma/client';
+import type { PaymentMethod, Role } from '@prisma/client';
 import { ApiError } from '../utils/ApiError';
 import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
@@ -33,6 +33,9 @@ async function isTeslaDriverForRide(userId: number, rideRequestId: number): Prom
   });
   return serving !== null;
 }
+
+/** Flat fee (poysha) charged when a passenger cancels after the driver arrived. */
+export const ARRIVED_CANCELLATION_FEE_POYSHA = 1000;
 
 export async function createRide(
   userId: number,
@@ -120,9 +123,11 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   throw new Error('Unreachable: retry loop exhausted');
 }
 
-export async function cancelRide(
+async function cancelRideInternal(
   userId: number,
   rideRequestId: number,
+  actorRole: Role,
+  reason?: string,
 ): Promise<Prisma.RideRequestGetPayload<{ include: typeof RIDE_DETAIL_INCLUDE }>> {
   return withRetry(async () =>
     prisma.$transaction(
@@ -131,24 +136,63 @@ export async function cancelRide(
 
         const ride = await tx.rideRequest.findUnique({
           where: { id: rideRequestId },
-          include: { pool: true },
+          include: { pool: { include: { tesla: { select: { driverId: true } } } } },
         });
         if (!ride) throw new ApiError(404, 'Ride request not found');
 
-        if (ride.passengerId !== userId) {
-          throw new ApiError(403, 'Only the passenger can cancel this ride');
+        // Ownership: passengers may only cancel their own ride; drivers only a
+        // ride currently assigned to their own Tesla.
+        if (actorRole === 'PASSENGER') {
+          if (ride.passengerId !== userId) {
+            throw new ApiError(403, 'Only the passenger can cancel this ride');
+          }
+        } else if (!ride.pool || ride.pool.tesla.driverId !== userId) {
+          throw new ApiError(403, 'This pool belongs to another driver');
         }
 
-        if (ride.status !== 'REQUESTED' && ride.status !== 'MATCHED') {
-          throw new ApiError(409, `Cannot cancel a ride in status ${ride.status}`);
-        }
-
+        // Uber-style cancellation window:
+        //   REQUESTED / MATCHED  -> either party cancels free.
+        //   DRIVER_ARRIVED       -> either party cancels; passenger pays a flat
+        //                           "driver showed up" fee, driver must state a
+        //                           reason (no fee to the passenger).
+        //   STARTED / terminal   -> cancellation is no longer allowed.
         const fromStatus = ride.status;
+        let cancellationFee = 0;
+
+        switch (ride.status) {
+          case 'REQUESTED':
+          case 'MATCHED':
+            break;
+          case 'DRIVER_ARRIVED':
+            if (actorRole === 'PASSENGER') {
+              cancellationFee = ARRIVED_CANCELLATION_FEE_POYSHA;
+            } else if (!reason || reason.trim() === '') {
+              throw new ApiError(400, 'A reason is required to cancel after arrival');
+            }
+            break;
+          case 'STARTED':
+          case 'COMPLETED':
+          case 'CANCELLED':
+            throw new ApiError(409, `Cannot cancel a ride in status ${ride.status}`);
+        }
+
+        const storedReason = reason ? reason.trim() : null;
 
         await tx.rideRequest.update({
           where: { id: ride.id },
-          data: { status: 'CANCELLED' },
+          data: {
+            status: 'CANCELLED',
+            cancelledBy: actorRole,
+            cancellationReason: storedReason,
+          },
         });
+
+        if (cancellationFee > 0) {
+          await tx.fare.update({
+            where: { rideRequestId: ride.id },
+            data: { cancellationFeePoysha: cancellationFee },
+          });
+        }
 
         if (ride.pool) {
           // Re-derive the pool state from its members: a solo cancel closes the
@@ -165,7 +209,7 @@ export async function cancelRide(
           rideRequestId: ride.id,
           fromStatus,
           toStatus: 'CANCELLED',
-          actor: `passenger:${userId}`,
+          actor: `${actorRole.toLowerCase()}:${userId}`,
         });
 
         return tx.rideRequest.findUniqueOrThrow({
@@ -176,4 +220,20 @@ export async function cancelRide(
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
   );
+}
+
+export async function cancelRide(
+  userId: number,
+  rideRequestId: number,
+  options: { reason?: string } = {},
+): Promise<Prisma.RideRequestGetPayload<{ include: typeof RIDE_DETAIL_INCLUDE }>> {
+  return cancelRideInternal(userId, rideRequestId, 'PASSENGER', options.reason);
+}
+
+export async function cancelRideForDriver(
+  driverId: number,
+  rideRequestId: number,
+  reason: string,
+): Promise<Prisma.RideRequestGetPayload<{ include: typeof RIDE_DETAIL_INCLUDE }>> {
+  return cancelRideInternal(driverId, rideRequestId, 'DRIVER', reason);
 }

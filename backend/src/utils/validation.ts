@@ -101,6 +101,30 @@ export const createRideSchema = z
 
 export type CreateRideInput = z.infer<typeof createRideSchema>;
 
+// Body for PATCH /api/rides/:id/cancel (passenger-facing). Reason is purely
+// informational and always optional.
+export const cancelRideSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(500, 'Reason must be at most 500 characters')
+    .optional(),
+});
+
+export type CancelRideInput = z.infer<typeof cancelRideSchema>;
+
+// Body for PATCH /api/driver/rides/:rideRequestId/cancel. A driver must always
+// state a non-empty reason.
+export const cancelRideDriverSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'A reason is required to cancel a ride')
+    .max(500, 'Reason must be at most 500 characters'),
+});
+
+export type CancelRideDriverInput = z.infer<typeof cancelRideDriverSchema>;
+
 export const updateDriverLocationSchema = z.object({
   zoneId: z
     .number({ message: 'zoneId must be a number' })
