@@ -53,6 +53,7 @@ export interface TeslaBrief {
   plateNickname: string;
   seatCapacity: number;
   driverId: number;
+  driver?: { id: number; name: string; phone: string } | null;
 }
 
 export interface Fare {

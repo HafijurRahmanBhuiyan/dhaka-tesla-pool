@@ -120,26 +120,39 @@ export function RideDetail({ rideId }: { rideId: string }) {
   const showFeeWarning = ride.status === "DRIVER_ARRIVED";
 
   return (
-    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <Link
-            href="/rides"
-            className="text-sm text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:py-8">
+      <div className="mb-6">
+        <Link
+          href="/rides"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-600 shadow-sm transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        >
+          <svg
+            className="h-4 w-4"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
           >
-            ← Back to rides
-          </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-            {ride.pickupZone.name}
-            <span className="mx-2 text-zinc-400">→</span>
-            {ride.dropoffZone.name}
-          </h1>
-          <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
-            Requested {formatDateTime(ride.requestedAt)}
-            {!final && ` · refreshing automatically`}
-          </p>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to My Rides
+        </Link>
+
+        <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <h1 className="break-words text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              {ride.pickupZone.name}
+              <span className="mx-2 text-zinc-400">→</span>
+              {ride.dropoffZone.name}
+            </h1>
+            <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
+              Requested {formatDateTime(ride.requestedAt)}
+              {!final && ` · refreshing automatically`}
+            </p>
+          </div>
+          <StatusBadge status={ride.status} />
         </div>
-        <StatusBadge status={ride.status} />
       </div>
 
       {error && (
@@ -163,22 +176,52 @@ export function RideDetail({ rideId }: { rideId: string }) {
 
       <div className="grid gap-6">
         {ride.pool?.tesla ? (
-          <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <div>
-              <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Your matched Tesla
-              </span>
-              <p className="mt-0.5 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                {ride.pool.tesla.plateNickname}
-              </p>
-              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                Your booking: {ride.seatsRequested}{" "}
-                {ride.seatsRequested === 1 ? "seat" : "seats"}
-              </p>
+          <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M13 2L4.09 12.97 11.5 12l-1.5 9 8.91-10.97H11.5L13 2z" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Your matched Tesla
+                </span>
+                <p className="mt-0.5 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                  {ride.pool.tesla.plateNickname}
+                </p>
+                {ride.pool.tesla.driver && (
+                  <p className="mt-0.5 break-words text-xs text-zinc-500 dark:text-zinc-400">
+                    {ride.pool.tesla.driver.name} · 📞 {ride.pool.tesla.driver.phone}
+                  </p>
+                )}
+                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  Your booking: {ride.seatsRequested}{" "}
+                  {ride.seatsRequested === 1 ? "seat" : "seats"} · {ride.pool.seatsUsed}/
+                  {ride.pool.tesla?.seatCapacity ?? "—"} seats filled
+                </p>
+              </div>
             </div>
-            <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-              {ride.pool.seatsUsed}/{ride.pool.tesla?.seatCapacity ?? "—"} seats filled
-            </span>
+            {ride.pool.tesla.driver && (
+              <a
+                href={`tel:${ride.pool.tesla.driver.phone}`}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-400"
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+                </svg>
+                Call driver
+              </a>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
@@ -227,7 +270,7 @@ export function RideDetail({ rideId }: { rideId: string }) {
               </div>
             </div>
           ) : (
-            <div className="mt-2 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950">
+            <div className="mt-2 flex flex-col gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950">
               <p className="text-sm text-red-700 dark:text-red-300">
                 {showFeeWarning
                   ? "Your driver is here. Cancelling now may incur a 10 Tk fee."
@@ -241,6 +284,7 @@ export function RideDetail({ rideId }: { rideId: string }) {
                     : void handleCancel()
                 }
                 loading={cancelling}
+                className="self-start sm:self-auto"
               >
                 Cancel ride
               </Button>
