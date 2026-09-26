@@ -110,6 +110,13 @@ export const updateDriverLocationSchema = z.object({
 
 export type UpdateDriverLocationInput = z.infer<typeof updateDriverLocationSchema>;
 
+// Body for PATCH /api/driver/status.
+export const updateDriverStatusSchema = z.object({
+  isActive: z.boolean({ message: 'isActive must be a boolean' }),
+});
+
+export type UpdateDriverStatusInput = z.infer<typeof updateDriverStatusSchema>;
+
 const rideStatusValues = [
   'REQUESTED',
   'MATCHED',

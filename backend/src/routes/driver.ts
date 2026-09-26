@@ -4,14 +4,34 @@ import {
   getActivePoolsHandler,
   getAvailableDriversHandler,
   getDriverLocationHandler,
+  getDriverStatusHandler,
+  setDriverStatusHandler,
   updateDriverLocationHandler,
 } from '../controllers/driverController';
 import { requireAuth, requireRole } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
 import { asyncHandler } from '../utils/asyncHandler';
-import { advanceRideSchema, updateDriverLocationSchema } from '../utils/validation';
+import {
+  advanceRideSchema,
+  updateDriverLocationSchema,
+  updateDriverStatusSchema,
+} from '../utils/validation';
 
 const router = Router();
+
+router.get(
+  '/status',
+  requireAuth,
+  requireRole('DRIVER'),
+  asyncHandler(getDriverStatusHandler),
+);
+router.patch(
+  '/status',
+  requireAuth,
+  requireRole('DRIVER'),
+  validate(updateDriverStatusSchema),
+  asyncHandler(setDriverStatusHandler),
+);
 
 router.get(
   '/pools/active',

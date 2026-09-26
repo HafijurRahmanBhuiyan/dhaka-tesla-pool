@@ -3,7 +3,17 @@ import { ApiError } from '../utils/ApiError';
 import { prisma } from '../utils/prisma';
 import { logStatusTransition } from '../utils/logger';
 import { NEXT_FORWARD_STEP, POOL_STATUS_TRANSITIONS } from '../config/poolTransitions';
-import { recomputePoolState } from './poolStateService';
+import { recomputePoolState, TERMINAL_RIDE_STATUSES } from './poolStateService';
+
+export const ACTIVE_RIDE_OFFLINE_MESSAGE = 'You have an active ride in progress';
+
+export interface DriverStatus {
+  teslaId: number;
+  isActive: boolean;
+  lastActiveAt: Date | null;
+  seatCapacity: number;
+  seatsUsed: number;
+}
 
 const RIDE_WITH_PASSENGER_INCLUDE = {
   passenger: { select: { id: true, name: true, phone: true } },
@@ -234,5 +244,79 @@ export async function getAvailableDriversInZone(pickupZoneId: number): Promise<A
   }
 
   return results;
+}
+
+async function activeSeatsFor(db: DbClient, teslaId: number): Promise<number> {
+  const activePool = await db.pool.findFirst({
+    where: { teslaId, status: 'MATCHED' },
+    select: { seatsUsed: true },
+  });
+  return activePool?.seatsUsed ?? 0;
+}
+
+function withDriverStatusShape(
+  tesla: { id: number; isActive: boolean; lastActiveAt: Date | null; seatCapacity: number },
+  seatsUsed: number,
+): DriverStatus {
+  return {
+    teslaId: tesla.id,
+    isActive: tesla.isActive,
+    lastActiveAt: tesla.lastActiveAt,
+    seatCapacity: tesla.seatCapacity,
+    seatsUsed,
+  };
+}
+
+/**
+ * The driver's own Tesla online state plus live capacity. `Tesla.isActive` is
+ * the single source of truth reused by the matching engine; reading it back
+ * keeps the dashboard toggle honest across devices.
+ */
+export async function getDriverStatus(driverId: number): Promise<DriverStatus> {
+  const tesla = await prisma.tesla.findFirst({ where: { driverId }, orderBy: { id: 'asc' } });
+  if (!tesla) throw new ApiError(404, 'No Tesla is registered to this driver');
+  return withDriverStatusShape(tesla, await activeSeatsFor(prisma, tesla.id));
+}
+
+/**
+ * Toggles the driver's OWN Tesla online/offline (ownership comes from the
+ * token, never from a client-supplied Tesla id). Going offline is refused with
+ * 409 while any ride on that Tesla is still active, using the same terminal
+ * statuses as the pool state machine so a driver cannot abandon a ride in
+ * progress. Check + write run in one transaction that locks the Tesla row.
+ */
+export async function setDriverStatus(
+  driverId: number,
+  isActive: boolean,
+): Promise<DriverStatus> {
+  return withConflictRetry(() =>
+    prisma.$transaction(async (tx) => {
+      const tesla = await tx.tesla.findFirst({
+        where: { driverId },
+        orderBy: { id: 'asc' },
+      });
+      if (!tesla) throw new ApiError(404, 'No Tesla is registered to this driver');
+
+      await tx.$queryRaw`SELECT id FROM "Tesla" WHERE id = ${tesla.id} FOR UPDATE`;
+
+      if (!isActive) {
+        const activeRide = await tx.rideRequest.findFirst({
+          where: {
+            pool: { teslaId: tesla.id },
+            status: { notIn: TERMINAL_RIDE_STATUSES },
+          },
+          select: { id: true },
+        });
+        if (activeRide) throw new ApiError(409, ACTIVE_RIDE_OFFLINE_MESSAGE);
+      }
+
+      const updated = await tx.tesla.update({
+        where: { id: tesla.id },
+        data: { isActive, lastActiveAt: new Date() },
+      });
+
+      return withDriverStatusShape(updated, await activeSeatsFor(tx, updated.id));
+    }),
+  );
 }
 
