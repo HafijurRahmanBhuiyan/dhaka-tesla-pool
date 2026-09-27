@@ -84,6 +84,8 @@ model RideRequest {
   // How many seats this passenger books as one request (>= 1). A request
   // reserves that many seats on the pool's Tesla, so seatsUsed counts the sum
   // of seatsRequested across active members, and fares scale per seat.
+  // The >= 1 rule is additionally enforced by the "seatsRequested_positive"
+  // CHECK constraint, which Prisma 6 cannot express in schema.prisma.
   seatsRequested Int                  @default(1)
   requestedAt   DateTime             @default(now())
   // Who initiated a cancellation (null until the ride is cancelled).
