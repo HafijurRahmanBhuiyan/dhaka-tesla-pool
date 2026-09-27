@@ -31,7 +31,7 @@ export const registerSchema = z
           .number({ message: 'seatCapacity must be a number' })
           .int('seatCapacity must be a whole number')
           .min(1, 'seatCapacity must be at least 1')
-          .max(20, 'seatCapacity must be at most 20'),
+          .max(3, 'seatCapacity must be at most 3'),
       })
       .optional(),
   })

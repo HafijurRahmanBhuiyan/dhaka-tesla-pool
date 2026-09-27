@@ -190,7 +190,7 @@ describe('POST /api/rides', () => {
     await createDriver({
       phone: '01788888881',
       email: 'second-driver@test.dev',
-      tesla: { plateNickname: 'Rocket', seatCapacity: 4 },
+      tesla: { plateNickname: 'Rocket', seatCapacity: 3 },
     });
 
     const south = await makeRideRequest(passengerToken, BANANI, MOKHAKALI);
@@ -636,7 +636,7 @@ describe('GET /api/rides (my rides)', () => {
       phone: '01733333330',
       email: 'ram@test.dev',
       name: 'Ram Driver',
-      tesla: { plateNickname: 'Lightning', seatCapacity: 4 },
+      tesla: { plateNickname: 'Lightning', seatCapacity: 3 },
     });
     const passenger = await createPassenger();
     const other = await createPassenger({ phone: '01777777770', email: 'other-me@test.dev' });
