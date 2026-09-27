@@ -1,0 +1,13 @@
+-- Database-level safety net for RideRequest.seatsRequested: a request always
+-- books at least one seat, so seat accounting (Pool.seatsUsed) and per-seat
+-- fares can never be skewed by a zero or negative count.
+--
+-- The zod schemas in src/utils/validation.ts already reject seatsRequested < 1
+-- at the API boundary, but nothing stopped a write that bypasses them (a
+-- direct Prisma client call, a raw query, a script or a future service) from
+-- storing 0 or a negative value. Prisma 6 cannot express a CHECK constraint in
+-- schema.prisma (@@check is rejected by the schema validator and @db.* only
+-- maps native types), so the constraint is added here.
+--
+-- The column itself is untouched: same type, default, and nullability.
+ALTER TABLE "RideRequest" ADD CONSTRAINT "seatsRequested_positive" CHECK ("seatsRequested" >= 1);
