@@ -157,7 +157,9 @@ export default function NewRidePage() {
   // For a chosen driver, cap the request at their free seats; for auto-match we
   // do not know the car until booking, so offer a practical ceiling that the
   // backend still double-checks against the real capacity.
-  const maxSeats = selectedDriver ? Math.max(1, selectedDriver.availableSeats) : 4;
+  const maxSeats = selectedDriver
+    ? Math.max(1, selectedDriver.availableSeats)
+    : Math.max(1, ...(availableDrivers?.map((d) => d.tesla.seatCapacity) ?? []));
   const seatsOptions = Array.from({ length: maxSeats }, (_, i) => i + 1);
 
   if (authLoading || !authenticated || role === "DRIVER") {

@@ -47,7 +47,7 @@ const INITIAL: RegisterForm = {
   password: "",
   role: "PASSENGER",
   plateNickname: "",
-  seatCapacity: "4",
+  seatCapacity: "3",
 };
 
 function InputField({
@@ -265,7 +265,7 @@ export default function RegisterPage() {
                       onChange={(e) => set("seatCapacity", e.target.value)}
                       className="w-full rounded-xl border border-[var(--card-border)] bg-[var(--muted)] px-4 py-2.5 text-sm text-[var(--foreground)] focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/20"
                     >
-                      {[2, 3, 4, 5].map((n) => (
+                      {[2, 3].map((n) => (
                         <option key={n} value={n}>{n} seats</option>
                       ))}
                     </select>
