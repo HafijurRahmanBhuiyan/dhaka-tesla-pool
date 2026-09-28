@@ -78,9 +78,42 @@ leaves one more car at home.
 - Test coverage closed against the PRD's six required scenarios (see
   `CONTRIBUTING.md` → *Test Coverage*); 74 backend tests.
 
-## Screenshots / GIFs
+## Screenshots
 
-> Placeholder — I will fill these in manually.
+### Authentication
+![Login](docs/screenshots/login-page.png)
+![Register — Passenger & Driver](docs/screenshots/Passenger&Driver-registerPage.png)
+
+### Booking a Ride (with live fare estimate & driver selection)
+![Request ride — Nusrat](docs/screenshots/requestRide(Nusrat).png)
+![Request ride — Rafiq (pooled, fewer seats free)](docs/screenshots/requestRide(Rafiq).png)
+![Fully booked driver shown as unavailable](docs/screenshots/fullyBooked.png)
+
+### Independent Per-Ride Lifecycle (Section 12/14 proof)
+Two passengers sharing the same Tesla and Pool, each at their own
+stage of the journey — proof that advancing one rider's status never
+affects another's:
+
+![Nusrat: In transit — Rafiq: Driver arrived, same pool](docs/screenshots/samePool-differentStage(Nusrat-Rafiq).png)
+![Driver dashboard: per-rider status and actions](docs/screenshots/samePoolDriver-dashboard.png)
+
+### Passenger Ride Detail & History
+![Ride detail — matched](docs/screenshots/passengerRide-details(Nusrat).png)
+![Ride detail — pooled with discount](docs/screenshots/passengerRideDetails(Rafiq).png)
+![Passenger ride history](docs/screenshots/passengerRide-history.png)
+
+### Driver Dashboard & Cancellation
+![Driver dashboard — online, stationed, active pool](docs/screenshots/driverDashboard.png)
+![Driver cancellation reason dropdown](docs/screenshots/driverRideCancelReason.png)
+![Driver ride history](docs/screenshots/driverRide-hisoty.png)
+
+### Concurrency: Last-Seat Race (Section 14)
+Shirin and Sohan both attempt to claim Bullet's last free seat at
+nearly the same instant — the system accepts exactly one and rejects
+the other with a clear message:
+
+![Both see 1 seat free, about to submit](docs/screenshots/2-PassengerFor-1-seat.png)
+![Shirin matched; Sohan's request rejected](docs/screenshots/1-accepted-1-rejected-bySystem.png)
 
 ## Architecture
 
