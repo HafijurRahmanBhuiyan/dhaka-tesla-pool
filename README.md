@@ -449,7 +449,7 @@ count never exceeds capacity — later also verified manually by racing two
 real passenger accounts for the last seat in the browser.
 
 **One rejected/changed suggestion:** a bug the AI missed, found through my
-own manual testing:** After an early version of the driver's "advance ride"
+own manual testing. After an early version of the driver's "advance ride"
 feature was implemented and reported as complete and verified, I manually
 tested it myself by pooling two passengers (Nusrat and Rafiq) onto the same
 Tesla and advancing their ride status as the driver. I discovered that
