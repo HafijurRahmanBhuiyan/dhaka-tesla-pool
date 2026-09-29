@@ -345,10 +345,24 @@ window as **Nusrat** and request **Banani → Mohakhali** (TESLAPAY), then as
 from the driver dashboard, advance **each rider individually** (Mark arrived →
 Start ride → Complete ride) and watch each fare settle as they finish.
 
-## Deployment URL
+## Deployment
 
-**Not yet deployed.** Deployment is the next step (Dockerized images are ready;
-see *Next improvements*).
+- **Frontend (live):** https://dhaka-tesla-pool-eight.vercel.app
+- **Backend API:** https://dhaka-tesla-pool-api-0d9l.onrender.com
+- Hosted on Vercel (frontend) + Render (backend) + Neon (PostgreSQL), all free tier.
+
+> Note: the backend is on Render's free tier, which sleeps after 15 minutes
+> of inactivity. The first request after idling may take 30–50 seconds to
+> respond while the service wakes up — this is a hosting limitation, not
+> an application bug.
+
+**Demo accounts** (all password `password123`):
+| Role | Email |
+|---|---|
+| Driver (Jashim, Tesla "Bullet", 3 seats) | jashim@example.com |
+| Passenger | nusrat@example.com |
+| Passenger | rafiq@example.com |
+| Passenger | shirin@example.com |
 
 ## API overview
 
