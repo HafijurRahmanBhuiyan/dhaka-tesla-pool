@@ -421,9 +421,52 @@ Error shape: `{ "error": "...", "issues": [...] }` with appropriate 4xx/5xx.
 - Driver availability toggle in the UI; fleet analytics.
 - Admin dashboard; rate limiting; refresh tokens; e2e browser tests (Playwright).
 
-## AI usage
+## AI Usage
 
-See below.
+**Tools used and how:**
+- **Claude** and **DeepSeek** — used to thoroughly understand the PRD,
+  research the domain (ride-pooling systems, concurrency patterns, fare
+  models), and build the technical knowledge needed to plan this project
+  correctly before writing any code.
+- **OpenCode** and **Antigravity** — used as coding agents for
+  implementation, writing tests, and fixing bugs, guided by detailed,
+  scoped prompts for each feature/phase rather than open-ended requests.
+
+**How AI was used responsibly:** AI tools were not trusted blindly or used
+for copy-paste implementation. Every feature and fix was manually verified
+end-to-end — via live smoke testing against the running app, direct
+database inspection, and reading the actual diffs — before being committed.
+Several real issues were only caught because of this manual verification,
+not because the AI reported them itself.
+
+**One accepted suggestion:** Enforcing Tesla seat capacity with a
+SERIALIZABLE transaction and a row lock (`SELECT ... FOR UPDATE`) inside
+`findOrCreatePoolForRide`, re-checking capacity right before incrementing
+`seatsUsed`. This correctly solves the last-seat race condition described
+in the PRD, and is proven by a dedicated test that fires multiple
+concurrent ride requests at a single Tesla's pool and asserts the seat
+count never exceeds capacity — later also verified manually by racing two
+real passenger accounts for the last seat in the browser.
+
+**One rejected/changed suggestion:** a bug the AI missed, found through my
+own manual testing:** After an early version of the driver's "advance ride"
+feature was implemented and reported as complete and verified, I manually
+tested it myself by pooling two passengers (Nusrat and Rafiq) onto the same
+Tesla and advancing their ride status as the driver. I discovered that
+marking the driver "arrived" for one rider incorrectly marked *both*
+riders as arrived simultaneously, along with their fares — even though
+each passenger has a different pickup and drop-off point and should
+progress independently. This was a significant architectural issue (the
+whole Pool's status was being pushed onto every RideRequest instead of each
+ride having its own lifecycle) that automated tests and the AI's own
+verification had not caught, because the tests were written around the
+same incorrect assumption. I wrote up the exact real-world scenario by hand
+and had it fixed as a dedicated architecture correction, then re-verified
+it live myself afterward (two riders on the same pool independently
+reaching different stages at the same time). This was the clearest lesson
+from building this project: AI-reported "verified and working" is a
+starting point, not a guarantee — the person directing the AI still has to
+understand the domain well enough to test the real scenario by hand.
 
 ## Concurrency handling (PRD §14)
 
