@@ -514,4 +514,4 @@ accounted for inside a matched pool.
 
 ## Demo video
 
-> Placeholder — link coming soon.
+**Video Link:** https://www.loom.com/share/87545292188642c9b3710604b35173cc
