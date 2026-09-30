@@ -28,9 +28,15 @@ export const createApp = (): express.Express => {
       },
     }),
   );
+
   app.use(express.json());
 
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ status: 'ok', message: 'Dhaka Tesla Pool API is running' });
+  });
+
   app.use('/', router);
+
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/rides', ridesRouter);
